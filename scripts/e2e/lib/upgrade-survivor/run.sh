@@ -2963,7 +2963,9 @@ if [ "$LIVE_ENABLED" = "1" ]; then
 fi
 if [ "$SCENARIO" = "legacy-operator-state" ]; then
   phase verify-backup-rollback verify_backup_rollback
-  phase verify-native-plugin-ui-opt-out native_plugin_ui_opt_out verify
+  if native_plugin_ui_upgrade_enabled; then
+    phase verify-native-plugin-ui-opt-out native_plugin_ui_opt_out verify
+  fi
   if [ "$baseline_version" = "2026.9.2" ]; then
     phase verify-sole-plugin-policy legacy_operator_plugin_policy verify
   fi

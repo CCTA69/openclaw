@@ -1,6 +1,5 @@
 import { registerPluginManagementEnglish } from "../../i18n/locales/en-plugin-management.ts";
 import { registerEnglishCatalog, t } from "../../lib/reactive/i18n.ts";
-import "./native-ui-disclosure.css";
 
 registerEnglishCatalog(registerPluginManagementEnglish);
 
@@ -13,9 +12,12 @@ export function PluginNativeUiDisclosure(props: { variant?: "install" | "bundle"
         ? "bundleTrust"
         : "nativeUi";
   return (
-    <aside class="plugin-native-ui-disclosure" aria-label={t(`pluginsPage.${copy()}.title`)}>
+    <aside
+      class="plugin-native-ui-disclosure callout"
+      aria-label={t(`pluginsPage.${copy()}.title`)}
+    >
       <strong>{t(`pluginsPage.${copy()}.title`)}</strong>
-      <p>{t(`pluginsPage.${copy()}.description`)}</p>
+      <div class="card-sub">{t(`pluginsPage.${copy()}.description`)}</div>
     </aside>
   );
 }
