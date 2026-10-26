@@ -1,4 +1,23 @@
-import { Errored, For, Loading, Show, createMemo, isPending, latest } from "solid-js";
+import type { JSX } from "@solidjs/web";
+import {
+  defaultRangeExtractor,
+  elementScroll,
+  observeElementOffset,
+  observeElementRect,
+  Virtualizer,
+  type VirtualItem,
+} from "@tanstack/virtual-core";
+import {
+  Errored,
+  For,
+  Loading,
+  Show,
+  createMemo,
+  createSignal,
+  isPending,
+  latest,
+  onSettled,
+} from "solid-js";
 import type { SessionsListResult } from "../../api/types.ts";
 import type { ApplicationContext, ApplicationGatewaySnapshot } from "../../app/context.ts";
 import { HubPageHeader } from "../../components/solid/hub-page-header.tsx";
@@ -10,6 +29,7 @@ import { formatUiError } from "../../lib/format-error.ts";
 import { formatRelativeTimestamp } from "../../lib/format.ts";
 import { shouldHandleNavigationClick } from "../../lib/navigation-click.ts";
 import { t } from "../../lib/reactive/i18n.ts";
+import { createLayoutMeasurement } from "../../lib/reactive/layout-measurement.ts";
 import { resolveSessionDisplayName } from "../../lib/session-display.ts";
 import {
   isSessionKeyAddressable,
@@ -80,6 +100,7 @@ function DashboardCard(props: {
   row: DashboardRow;
   handlers: DashboardGalleryHandlers;
   gatewaySnapshot?: ApplicationGatewaySnapshot;
+  contentRef: (element: HTMLElement) => void;
 }) {
   const target = createMemo(() =>
     isSessionKeyAddressable(props.row.key, props.data.globalScope)
@@ -143,13 +164,14 @@ function DashboardCard(props: {
       <Show
         when={target()}
         fallback={
-          <div class="dashboard-card__main">
+          <div class="dashboard-card__main" ref={props.contentRef}>
             <Content />
           </div>
         }
       >
         {(destination) => (
           <a
+            ref={props.contentRef}
             class="dashboard-card__main"
             href={destination().href}
             aria-label={title()}
@@ -166,6 +188,217 @@ function DashboardCard(props: {
         )}
       </Show>
     </article>
+  );
+}
+
+function DashboardGrid(props: {
+  data: DashboardsRouteData;
+  rows: DashboardRow[];
+  handlers: DashboardGalleryHandlers;
+  gatewaySnapshot?: ApplicationGatewaySnapshot;
+}) {
+  let grid!: HTMLDivElement;
+  let scroller: HTMLElement | null = null;
+  let columns = 3;
+  let gap = 16;
+  const content = new Map<string, HTMLElement>();
+  const [focused, setFocused] = createSignal<string>();
+  const [view, setView] = createSignal<{
+    tracks: VirtualItem[];
+    height: number;
+    columns: number;
+    gap: number;
+    available: boolean;
+  }>({ tracks: [], height: 0, columns, gap, available: true });
+  const windowed = createMemo(() => props.rows.length > 60 && view().available);
+  const indexes = createMemo(() => new Map(props.rows.map((row, index) => [row.key, index])));
+  const publish = () => {
+    const tracks = virtualizer.getVirtualItems();
+    const height = virtualizer.getTotalSize();
+    setView((previous) =>
+      previous.height === height &&
+      previous.columns === columns &&
+      previous.gap === gap &&
+      previous.available === Boolean(scroller) &&
+      previous.tracks.length === tracks.length &&
+      previous.tracks.every((track, index) => {
+        const next = tracks[index]!;
+        return track.index === next.index && track.start === next.start && track.size === next.size;
+      })
+        ? previous
+        : { tracks, height, columns, gap, available: Boolean(scroller) },
+    );
+  };
+  const virtualizer = new Virtualizer<HTMLElement, HTMLDivElement>({
+    count: 0,
+    enabled: false,
+    getScrollElement: () => scroller,
+    estimateSize: () => 320,
+    observeElementRect,
+    observeElementOffset,
+    scrollToFn: elementScroll,
+    overscan: 2,
+    onChange: publish,
+  });
+  onSettled(() => {
+    const { _didMount: mountVirtualizer } = virtualizer;
+    return mountVirtualizer();
+  });
+  const measure = createLayoutMeasurement(
+    () => ({ rows: props.rows, indexes: indexes(), focused: focused(), windowed: windowed() }),
+    (next) => {
+      if (!next) {
+        return;
+      }
+      const viewport = grid.closest<HTMLElement>(".content");
+      const style = getComputedStyle(grid);
+      const nextColumns = style.gridTemplateColumns.split(" ").filter(Boolean).length || 3;
+      const nextGap = Number.parseFloat(style.rowGap) || 0;
+      const margin = viewport
+        ? grid.getBoundingClientRect().top -
+          viewport.getBoundingClientRect().top +
+          viewport.scrollTop
+        : 0;
+      const heights = new Map<number, number>();
+      for (const [key, element] of content) {
+        const index = next.indexes.get(key);
+        if (index !== undefined) {
+          const track = Math.floor(index / nextColumns);
+          // Measure intrinsic content, not the stretched card: a track must also shrink.
+          const height = element.getBoundingClientRect().height + 2;
+          heights.set(track, Math.max(heights.get(track) ?? 0, height));
+        }
+      }
+      const count = Math.ceil(next.rows.length / nextColumns);
+      const focusedIndex = next.indexes.get(next.focused ?? "");
+      // Native Tab enters at either endpoint, then the neighboring track is ready.
+      const pinned = new Set([0, count - 1]);
+      if (focusedIndex !== undefined) {
+        const track = Math.floor(focusedIndex / nextColumns);
+        for (const index of [track - 1, track, track + 1]) {
+          if (index >= 0 && index < count) {
+            pinned.add(index);
+          }
+        }
+      }
+      return () => {
+        scroller = viewport;
+        if (columns !== nextColumns) {
+          virtualizer.measure();
+        }
+        columns = nextColumns;
+        gap = nextGap;
+        virtualizer.setOptions({
+          ...virtualizer.options,
+          count,
+          enabled: next.windowed && Boolean(viewport),
+          getItemKey: (index) => next.rows[index * nextColumns]!.key,
+          gap,
+          scrollMargin: margin,
+          rangeExtractor: (range) =>
+            [...new Set([...defaultRangeExtractor(range), ...pinned])].toSorted((a, b) => a - b),
+        });
+        const { _willUpdate: updateVirtualizer } = virtualizer;
+        updateVirtualizer();
+        for (const [index, height] of heights) {
+          if (height > 2) {
+            virtualizer.resizeItem(index, height);
+          }
+        }
+        publish();
+      };
+    },
+    {
+      targets: () => [grid, ...(scroller ? [scroller] : []), ...content.values()],
+      fonts: true,
+      changeTiming: "sync",
+    },
+  );
+  const tracks = createMemo(() => new Map(view().tracks.map((track) => [track.index, track])));
+  const visible = createMemo(() => {
+    if (!windowed()) {
+      return props.rows;
+    }
+    if (view().tracks.length === 0) {
+      return [...props.rows.slice(0, 12), ...props.rows.slice(-3)];
+    }
+    return view().tracks.flatMap((track) =>
+      props.rows.slice(track.index * view().columns, (track.index + 1) * view().columns),
+    );
+  });
+  function CardSlot(card: { row: DashboardRow }) {
+    let element: HTMLElement;
+    let key: string | undefined;
+    const bindContent = (next: HTMLElement) => {
+      element = next;
+      if (key !== undefined) {
+        content.set(key, next);
+        measure();
+      }
+    };
+    onSettled(() => {
+      key = card.row.key;
+      content.set(key, element);
+      measure();
+      return () => {
+        if (key !== undefined && content.get(key) === element) {
+          content.delete(key);
+          measure();
+        }
+      };
+    });
+    const index = () => indexes().get(card.row.key)!;
+    const position = (): JSX.CSSProperties | undefined => {
+      if (!windowed()) {
+        return undefined;
+      }
+      const trackIndex = Math.floor(index() / view().columns);
+      const track = tracks().get(trackIndex);
+      return {
+        position: "absolute",
+        top: `${(track?.start ?? trackIndex * (320 + view().gap)) - virtualizer.options.scrollMargin}px`,
+        "inset-inline-start": `calc(${index() % view().columns} * (100% + ${view().gap}px) / ${view().columns})`,
+        width: `calc((100% - ${(view().columns - 1) * view().gap}px) / ${view().columns})`,
+        height: `${track?.size ?? 320}px`,
+      };
+    };
+    return (
+      <div
+        class="dashboards-grid__item"
+        role="listitem"
+        aria-posinset={index() + 1}
+        aria-setsize={props.rows.length}
+        style={position()}
+        onFocusIn={() => setFocused(card.row.key)}
+      >
+        <DashboardCard
+          data={props.data}
+          row={card.row}
+          handlers={props.handlers}
+          gatewaySnapshot={props.gatewaySnapshot}
+          contentRef={bindContent}
+        />
+      </div>
+    );
+  }
+  return (
+    <div
+      ref={(element) => (grid = element)}
+      class="dashboards-grid"
+      role="list"
+      style={
+        windowed()
+          ? {
+              position: "relative",
+              height: `${view().height || Math.ceil(props.rows.length / 3) * 336}px`,
+            }
+          : undefined
+      }
+    >
+      <For each={visible()} keyed={(row) => row.key}>
+        {(row) => <CardSlot row={row()} />}
+      </For>
+    </div>
   );
 }
 
@@ -259,18 +492,12 @@ function DashboardList(props: {
               </div>
             }
           >
-            <div class="dashboards-grid">
-              <For each={visibleRows()} keyed={(row) => row.key}>
-                {(row) => (
-                  <DashboardCard
-                    data={props.data}
-                    row={row()}
-                    handlers={props.handlers}
-                    gatewaySnapshot={props.gatewaySnapshot}
-                  />
-                )}
-              </For>
-            </div>
+            <DashboardGrid
+              data={props.data}
+              rows={visibleRows()}
+              handlers={props.handlers}
+              gatewaySnapshot={props.gatewaySnapshot}
+            />
           </Show>
         </section>
       </Show>

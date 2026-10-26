@@ -134,3 +134,52 @@ it.each(["", "/openclaw"])("navigates dashboard links with base path %s", (baseP
   link.dispatchEvent(handled);
   expect(onNavigate).toHaveBeenCalledOnce();
 });
+
+it("bounds a large gallery while retaining native endpoint links through sorting and filtering", async () => {
+  const sessions = Array.from({ length: 1_000 }, (_, index) => ({
+    ...dashboard,
+    key: `agent:main:data-gallery-${index}`,
+    displayName: `Dashboard ${String(999 - index).padStart(4, "0")}`,
+    updatedAt: 1_000 - index,
+  }));
+  const [currentFilters, setFilters] = createSignal(filters);
+  const { container } = mountSolid(() => (
+    <div class="content">
+      <DashboardsView
+        data={routeData(sessions)}
+        readReady={() => undefined}
+        filters={currentFilters()}
+        handlers={handlers}
+      />
+    </div>
+  ));
+  const first = container.querySelector('[data-dashboard-session="agent:main:data-gallery-0"] a');
+  const last = container.querySelector<HTMLAnchorElement>(
+    '[data-dashboard-session="agent:main:data-gallery-999"] a',
+  );
+  expect(first).not.toBeNull();
+  expect(last).not.toBeNull();
+  expect(last?.getAttribute("href")).toContain("/dashboard/");
+  await waitForSolid(() => {
+    expect(container.querySelectorAll("[data-dashboard-session]").length).toBeLessThan(100);
+    expect(container.querySelector('[role="listitem"]')?.getAttribute("aria-setsize")).toBe("1000");
+  });
+
+  setFilters({ ...filters, sort: "title" });
+  await waitForSolid(() => {
+    expect(container.querySelector("[data-dashboard-session] a")).toBe(last);
+    expect(container.querySelector('[data-dashboard-session="agent:main:data-gallery-0"] a')).toBe(
+      first,
+    );
+  });
+  last!.focus();
+  await waitForSolid(() => expect(document.activeElement).toBe(last));
+
+  setFilters({ ...filters, query: "Dashboard 0000" });
+  await waitForSolid(() => {
+    expect(container.querySelectorAll("[data-dashboard-session]")).toHaveLength(1);
+    expect(container.querySelector("[data-dashboard-session] a")).toBe(last);
+    expect(container.querySelector('[role="listitem"]')?.getAttribute("aria-setsize")).toBe("1");
+    expect(document.activeElement).toBe(last);
+  });
+});

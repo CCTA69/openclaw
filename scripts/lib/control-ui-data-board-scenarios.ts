@@ -273,11 +273,31 @@ async function prepareBoard(page: Page) {
 async function prepareGallery(page: Page) {
   await page.locator(`${galleryHost} [data-dashboard-session]`).first().waitFor();
   await page.waitForFunction(
-    ({ selector, count }) =>
-      document.querySelectorAll(`${selector} [data-dashboard-session]`).length === count,
+    ({ selector, count }) => {
+      const host = document.querySelector(selector);
+      const represented = host?.querySelector(".dashboards-grid [aria-setsize]");
+      return (
+        Number(represented?.getAttribute("aria-setsize")) === count ||
+        host?.querySelectorAll("[data-dashboard-session]").length === count
+      );
+    },
     { selector: galleryHost, count: galleryCount },
   );
   await settle(page);
+}
+
+async function galleryPresentationCounts(page: Page) {
+  return page.locator(galleryHost).evaluate((host) => {
+    const cards = host.querySelectorAll("[data-dashboard-session]").length;
+    const represented = host.querySelector(".dashboards-grid [aria-setsize]");
+    return {
+      cards,
+      links: host.querySelectorAll("[data-dashboard-session] a.dashboard-card__main").length,
+      titles: host.querySelectorAll("[data-dashboard-session] h2").length,
+      representedCards: represented ? Number(represented.getAttribute("aria-setsize")) : cards,
+      windowed: represented !== null && cards < Number(represented.getAttribute("aria-setsize")),
+    };
+  });
 }
 
 async function prepareWorkspace(page: Page) {
@@ -471,7 +491,7 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
     id: "data-dashboards-first-render",
     dataPage: "dashboards",
     route: "/new",
-    expected: "Opening Dashboards presents 1,000 cards with only nearby previews active.",
+    expected: "Opening Dashboards represents 1,000 cards with only nearby previews active.",
     fixtureOverrides: createGalleryFixture,
     rowSelector: "[data-dashboard-session]",
     prepare: async (page) => {
@@ -480,6 +500,7 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
     run: async (page) => {
       await page.getByRole("link", { name: "Dashboards", exact: true }).click();
       await prepareGallery(page);
+      return galleryPresentationCounts(page);
     },
   },
   {
@@ -562,7 +583,7 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
     id: "data-dashboards-sort",
     dataPage: "dashboards",
     route: "/dashboards",
-    expected: "Sorting all 1,000 dashboards preserves their count and title order.",
+    expected: "Sorting all 1,000 dashboards preserves their represented count and title order.",
     fixtureOverrides: createGalleryFixture,
     rowSelector: "[data-dashboard-session]",
     prepare: prepareGallery,
@@ -575,6 +596,11 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
             ?.getAttribute("data-dashboard-session") === "agent:main:data-gallery-999",
       );
       await settle(page);
+      const counts = await galleryPresentationCounts(page);
+      if (counts.representedCards !== galleryCount || (counts.windowed && counts.cards > 100)) {
+        throw new Error("Sorting lost dashboard results or mounted an unbounded gallery window");
+      }
+      return counts;
     },
   },
   {
@@ -592,7 +618,30 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
         match: { sessionKey: "agent:main:data-gallery-999" },
       });
       await settle(page);
-      return { previewReads: (await gateway.getRequests("board.get")).length };
+      const finalCard = page.locator('[data-dashboard-session="agent:main:data-gallery-999"]');
+      await finalCard.scrollIntoViewIfNeeded();
+      await finalCard
+        .locator(".dashboard-card__author")
+        .filter({ hasText: "By Author 9" })
+        .waitFor();
+      await finalCard.locator("openclaw-report-widget svg").waitFor();
+      await page.waitForFunction(() => {
+        const card = document.querySelector(
+          '[data-dashboard-session="agent:main:data-gallery-999"]',
+        );
+        const viewport = card?.closest(".content");
+        if (!card || !viewport) {
+          return false;
+        }
+        const bounds = card.getBoundingClientRect();
+        const visible = viewport.getBoundingClientRect();
+        return bounds.top < visible.bottom && bounds.bottom > visible.top;
+      });
+      const counts = await galleryPresentationCounts(page);
+      if (counts.windowed && counts.cards > 100) {
+        throw new Error("Scrolling mounted an unbounded gallery window");
+      }
+      return { ...counts, previewReads: (await gateway.getRequests("board.get")).length };
     },
   },
   {
@@ -601,7 +650,7 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
     diagnostic: "Multi-viewport correctness and capture; not a timing comparison.",
     route: "/dashboards",
     expected:
-      "All 1,000 titles and links remain native, the final card reveals its content on focus, and 3/2/1-column layouts fit the viewport.",
+      "All 1,000 results remain searchable, mounted links stay native, the final card reveals its content on focus, and 3/2/1-column layouts fit the viewport.",
     fixtureOverrides: createGalleryFixture,
     prepare: prepareGallery,
     run: async (page) => {
@@ -622,6 +671,20 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
           [520, 1],
         ] as const) {
           await page.setViewportSize({ width, height: viewport.height });
+          await page
+            .locator('[data-dashboard-session="agent:main:data-gallery-0"] a.dashboard-card__main')
+            .focus();
+          for (let index = 1; index <= 15; index += 1) {
+            await page.keyboard.press("Tab");
+            const focusedKey = await page.evaluate(() =>
+              document.activeElement
+                ?.closest("[data-dashboard-session]")
+                ?.getAttribute("data-dashboard-session"),
+            );
+            if (focusedKey !== `agent:main:data-gallery-${index}`) {
+              throw new Error(`Native Tab skipped dashboard ${index} at ${width}px`);
+            }
+          }
           await finalCard.scrollIntoViewIfNeeded();
           await finalLink.focus();
           await finalCard
@@ -665,13 +728,16 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
                 );
               }
             }, columns);
-          const counts = await page.locator(galleryHost).evaluate((host) => ({
-            cards: host.querySelectorAll("[data-dashboard-session]").length,
-            links: host.querySelectorAll("[data-dashboard-session] a.dashboard-card__main").length,
-            titles: host.querySelectorAll("[data-dashboard-session] h2").length,
-          }));
-          if (Object.values(counts).some((count) => count !== galleryCount)) {
-            throw new Error(`Gallery lost native cards, titles or links at ${width}px`);
+          const counts = await galleryPresentationCounts(page);
+          if (
+            counts.representedCards !== galleryCount ||
+            counts.cards !== counts.links ||
+            counts.cards !== counts.titles ||
+            (counts.windowed && counts.cards > 100)
+          ) {
+            throw new Error(
+              `Gallery lost results, native titles/links, or bounded rendering at ${width}px`,
+            );
           }
         }
         return { cards: galleryCount, responsiveLayouts: 3, retainedFinalLink: true };
