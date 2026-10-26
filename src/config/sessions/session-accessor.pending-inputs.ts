@@ -54,6 +54,7 @@ import {
   type SessionPendingInputAuthority,
 } from "./session-pending-input-authority.js";
 import { SessionPendingInputCustodyError } from "./session-pending-input-custody-error.js";
+import { finishPendingInputSources } from "./session-pending-input-live-owner.js";
 import type { PendingInputCustodyGrant } from "./session-pending-input-operations.types.js";
 import type { SessionPendingInputOwner } from "./session-pending-input-owner.types.js";
 import type { SessionPendingInputReceipt } from "./session-pending-input-receipt.types.js";
@@ -63,6 +64,7 @@ import {
   isFinalInputCompletion,
   parseSessionPendingInputMessage,
 } from "./session-pending-input-value.js";
+import type { PreparedSessionMentionInvitation } from "./session-sharing-authority.types.js";
 import {
   runWithSessionSourceScope,
   type SessionSourceAssertion,
@@ -77,6 +79,22 @@ export type { SessionPendingInputReceipt } from "./session-pending-input-receipt
 
 const receiptOwners = new WeakMap<SessionPendingInputReceipt, SessionPendingInputOwner>();
 const withdrawnOwners = new WeakSet<SessionPendingInputOwner>();
+
+/** Bind authority to the private accepted bytes, never a mutable receipt or imported transcript. */
+export function bindSessionPendingInputMentionInvitation(
+  receipt: SessionPendingInputReceipt,
+  prepare: (message: PersistedUserTurnMessage) => PreparedSessionMentionInvitation | undefined,
+): void {
+  const owner = receiptOwners.get(receipt);
+  if (!owner || owner.consumed || owner.mentionInvitation) {
+    return;
+  }
+  const prepared = prepare(parseSessionPendingInputMessage(owner.messageJson));
+  if (prepared) {
+    owner.mentionInvitation = structuredClone(prepared.invitation);
+    owner.assertMentionInvitationCurrent = prepared.assertCurrent;
+  }
+}
 
 /** The private accepted bytes survive mutable receipt projections and replay preparation. */
 export function readSessionPendingInputRequesterOrigin(
@@ -136,23 +154,6 @@ export function withSessionPendingInputPersistence<T>(
 ): T {
   const owner = receiptOwners.get(receipt);
   return owner ? runWithSessionPendingInputPersistence(owner, persist) : receipt.run(persist);
-}
-
-function finishPendingInputSources(
-  sources: readonly SessionPendingInputOwner[],
-  disposition: "cancelled" | "interrupted",
-): void {
-  const failures: unknown[] = [];
-  for (const source of sources) {
-    try {
-      source.finish(disposition);
-    } catch (error) {
-      failures.push(error);
-    }
-  }
-  if (failures.length) {
-    throw new AggregateError(failures, "Failed to finish collected input custody");
-  }
 }
 
 /** Bind one collected message to its private admitted sources without creating another durable queue. */

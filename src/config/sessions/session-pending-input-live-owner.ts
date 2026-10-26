@@ -4,6 +4,40 @@ import type {
   SessionPendingInputWorkerReceipt,
 } from "./session-pending-input.types.js";
 
+export function finishPendingInputSources(
+  sources: readonly SessionPendingInputOwner[],
+  disposition: "cancelled" | "interrupted",
+): void {
+  const failures: unknown[] = [];
+  for (const source of sources) {
+    try {
+      source.finish(disposition);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length) {
+    throw new AggregateError(failures, "Failed to finish collected input custody");
+  }
+}
+
+/** Worker facts delegate liveness to the host; only the host may finish custody. */
+export function hydratePendingInputWorkerOwner(
+  facts: SessionPendingInputWorkerFacts,
+  assertCurrent: () => void,
+): SessionPendingInputOwner {
+  const hydrate = (current: SessionPendingInputWorkerFacts): SessionPendingInputOwner => ({
+    ...current,
+    workerDatabasePath: current.databasePath,
+    sources: current.sources?.map(hydrate),
+    assertCurrent,
+    finish: () => {
+      throw new Error("Worker custody cannot finish its host owner");
+    },
+  });
+  return hydrate(facts);
+}
+
 /** Only serializable custody facts cross to the worker; live promotion links stay on the host. */
 export function copySessionPendingInputWorkerFacts(
   owner: SessionPendingInputOwner,
@@ -19,6 +53,7 @@ export function copySessionPendingInputWorkerFacts(
     idempotencyKey: owner.idempotencyKey,
     lifecycleGeneration: owner.lifecycleGeneration,
     messageJson: owner.messageJson,
+    mentionInvitation: owner.mentionInvitation,
     preparedAuthority:
       owner.authority || owner.sources?.some((source) => source.authority) ? true : undefined,
     ...(owner.sources ? { sources: owner.sources.map(copySessionPendingInputWorkerFacts) } : {}),
