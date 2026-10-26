@@ -15,6 +15,11 @@ function location(url: string): RouteLocation {
 describe("Plugins route data", () => {
   it.each([
     ["/plugins", null],
+    ["/plugins/openclaw/linear", null],
+    [
+      "/plugins/ch_QG9wZW5jbGF3L2xpbmVhcg?probe=1#catalog",
+      "/plugins/openclaw/linear?probe=1#catalog",
+    ],
     ["/settings/plugins", null],
     ["/settings/plugins?tab=advanced", null],
     ["/settings/plugins/discover", "/plugins"],

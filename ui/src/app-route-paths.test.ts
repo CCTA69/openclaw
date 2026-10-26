@@ -19,6 +19,7 @@ import {
   pathForClawCatalogEntry,
   pathForPluginSettings,
   pathForPluginCatalogEntry,
+  pluginCatalogIdFromPath,
   pathForWorkboardBoard,
   pathForTerminalSession,
   terminalSessionIdFromPath,
@@ -338,10 +339,21 @@ describe("Memory tab route paths", () => {
 });
 
 describe("Plugin catalog mount inference", () => {
+  it("maps readable catalog links to the unchanged identity and rejects malformed paths", () => {
+    const id = "ch_QG9wZW5jbGF3L2xpbmVhcg";
+    expect(pathForPluginCatalogEntry(id)).toBe("/plugins/openclaw/linear");
+    expect(pluginCatalogIdFromPath("/plugins/openclaw/linear")).toBe(id);
+    expect(pluginCatalogIdFromPath("/plugins/" + id)).toBe(id);
+    expect(pluginCatalogIdFromPath("/plugins/openclaw/linear/extra")).toBeNull();
+    expect(pluginCatalogIdFromPath("/plugins/openclaw/%2Flinear")).toBeNull();
+    expect(pluginCatalogIdFromPath("/plugins/openclaw/..")).toBeNull();
+    expect(pathForPluginCatalogEntry("local_bGluZWFy")).toBe("/plugins/local_bGluZWFy");
+    expect(pathForPluginCatalogEntry("ch_bWF0cml4")).toBe("/plugins/ch_bWF0cml4");
+  });
   it.each(["/ui", "/portable/control"])(
     "retains %s when starting a catalog detail",
     async (basePath) => {
-      const pathname = pathForPluginCatalogEntry("calendar", basePath);
+      const pathname = pathForPluginCatalogEntry("ch_QG9wZW5jbGF3L2xpbmVhcg", basePath);
       const inferredBase = inferBasePathFromPathname(pathname);
       expect(inferredBase).toBe(basePath);
       const history = createHistory(pathname, "?probe=1", "#catalog");
