@@ -63,6 +63,7 @@ import { registerPortalsEnglish } from "../../ui/src/i18n/locales/en-portals.ts"
 import { registerPreferencesEnglish } from "../../ui/src/i18n/locales/en-preferences.ts";
 import { registerProcessesEnglish } from "../../ui/src/i18n/locales/en-processes.ts";
 import { registerProfileEnglish } from "../../ui/src/i18n/locales/en-profile.ts";
+import { registerRouteSubtitlesEnglish } from "../../ui/src/i18n/locales/en-route-subtitles.ts";
 import { registerSecretsStoreEnglish } from "../../ui/src/i18n/locales/en-secrets-store.ts";
 import { registerSessionMachineEnglish } from "../../ui/src/i18n/locales/en-session-machine.ts";
 import { registerSessionNavigationEnglish } from "../../ui/src/i18n/locales/en-session-navigation.ts";
@@ -103,6 +104,7 @@ const sourceFiles = [
   "en-native-link-menu.ts",
   "en-worker-capacity.ts",
   "en.ts",
+  "en-route-subtitles.ts",
   "en-agents.ts",
   "en-about.ts",
   "en-dashboards.ts",
@@ -158,6 +160,7 @@ const sourceFiles = [
   "en-personal-instructions.ts",
   "en-session-machine.ts",
   "en-session-navigation.ts",
+  "en-session-organization-shared.ts",
   "en-session-organization.ts",
   "en-session-people.ts",
   "en-session-placement.ts",
@@ -185,6 +188,9 @@ export function loadControlUiStartupCatalog(): TranslationMap {
 }
 
 export function loadControlUiSourceCatalog(): TranslationMap {
+  // Keep canonical translation order when summary copy moves out of the lazy CI catalog.
+  const { automationNoChecks, ...pullRequests } = registerGitHubEnglish.catalog.chat.pullRequests;
+  const { automationRetry, ...ciPullRequests } = registerChatCiEnglish.catalog.chat.pullRequests;
   const agentChip: TranslationMap = {};
   for (const [key, value] of Object.entries(en.agentChip)) {
     agentChip[key] = value;
@@ -288,6 +294,15 @@ export function loadControlUiSourceCatalog(): TranslationMap {
     }
     chat[key] = value;
   }
+  const commandResults: TranslationMap = {};
+  for (const [key, value] of Object.entries(en.chat.commandResults)) {
+    if (key === "help") {
+      for (const name of ["unknownCommand", "options", "sessionUnavailable"] as const) {
+        commandResults[name] = registerChatCommandResultsEnglish.catalog.chat.commandResults[name];
+      }
+    }
+    commandResults[key] = value;
+  }
   const sidebar: TranslationMap = {};
   for (const [key, value] of Object.entries(en.chat.sidebar)) {
     if (key === "threads") {
@@ -308,6 +323,7 @@ export function loadControlUiSourceCatalog(): TranslationMap {
     // Preserve partial-fragment key order while keeping shared labels eager.
     {
       ...en,
+      subtitles: registerRouteSubtitlesEnglish.catalog.subtitles,
       languages: registerSettingsEnglish.catalog.languages,
       onboarding: registerMemoryImportEnglish.catalog.onboarding,
       execApproval: registerApprovalsEnglish.catalog.execApproval,
@@ -348,6 +364,7 @@ export function loadControlUiSourceCatalog(): TranslationMap {
           ...registerSessionNavigationEnglish.catalog.chat.sessionSuggestions,
           ...registerChatSessionEnglish.catalog.chat.sessionSuggestions,
         },
+        commandResults,
         commands: registerCommandPaletteEnglish.catalog.chat.commands,
         welcome: registerCommandPaletteEnglish.catalog.chat.welcome,
         messages: registerChatMessageMetadataEnglish.catalog.chat.messages,
@@ -358,7 +375,7 @@ export function loadControlUiSourceCatalog(): TranslationMap {
         mediaPlayer: registerChatMediaEnglish.catalog.chat.mediaPlayer,
         attachments: registerChatComposerEnglish.catalog.chat.attachments,
         privateDraftReload: registerChatComposerEnglish.catalog.chat.privateDraftReload,
-        pullRequests: registerGitHubEnglish.catalog.chat.pullRequests,
+        pullRequests,
       },
       sessionHovercard: registerGitHubEnglish.catalog.sessionHovercard,
       githubPublication: registerGitHubEnglish.catalog.githubPublication,
@@ -393,7 +410,7 @@ export function loadControlUiSourceCatalog(): TranslationMap {
     registerSecretsStoreEnglish.catalog,
     registerBrowserEnglish.catalog,
     registerChatCameraEnglish.catalog,
-    registerChatCiEnglish.catalog,
+    { chat: { pullRequests: { ...ciPullRequests, automationNoChecks, automationRetry } } },
     registerChatCommandResultsEnglish.catalog,
     registerChatComposerEnglish.catalog,
     registerChatGoalsEnglish.catalog,

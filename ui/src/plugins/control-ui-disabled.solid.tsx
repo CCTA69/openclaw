@@ -2,12 +2,8 @@ import { Show } from "solid-js";
 import type { ApplicationContext } from "../app/context.ts";
 import { t } from "../lib/reactive/i18n.ts";
 
-export type CustomPluginUiDisabledContext = {
-  readonly plugins: Pick<ApplicationContext["plugins"], "errors">;
-};
-
 export function CustomPluginUiDisabled(props: {
-  context: CustomPluginUiDisabledContext | undefined;
+  context: { readonly plugins: Pick<ApplicationContext["plugins"], "errors"> } | undefined;
   pluginId: string;
 }) {
   return (
