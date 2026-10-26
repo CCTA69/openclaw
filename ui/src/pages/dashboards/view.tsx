@@ -201,6 +201,9 @@ function DashboardGrid(props: {
   let scroller: HTMLElement | null = null;
   let columns = 3;
   let gap = 16;
+  let itemKeys:
+    | { rows: DashboardRow[]; columns: number; getItemKey: (index: number) => string }
+    | undefined;
   const content = new Map<string, HTMLElement>();
   const [focused, setFocused] = createSignal<string>();
   const [view, setView] = createSignal<{
@@ -254,6 +257,16 @@ function DashboardGrid(props: {
       const style = getComputedStyle(grid);
       const nextColumns = style.gridTemplateColumns.split(" ").filter(Boolean).length || 3;
       const nextGap = Number.parseFloat(style.rowGap) || 0;
+      // A new callback invalidates all tracks; only row order or column count changes their keys.
+      if (itemKeys?.rows !== next.rows || itemKeys.columns !== nextColumns) {
+        const rows = next.rows;
+        itemKeys = {
+          rows,
+          columns: nextColumns,
+          getItemKey: (index) => rows[index * nextColumns]!.key,
+        };
+      }
+      const { getItemKey } = itemKeys;
       const margin = viewport
         ? grid.getBoundingClientRect().top -
           viewport.getBoundingClientRect().top +
@@ -292,7 +305,7 @@ function DashboardGrid(props: {
           ...virtualizer.options,
           count,
           enabled: next.windowed && Boolean(viewport),
-          getItemKey: (index) => next.rows[index * nextColumns]!.key,
+          getItemKey,
           gap,
           scrollMargin: margin,
           rangeExtractor: (range) =>
