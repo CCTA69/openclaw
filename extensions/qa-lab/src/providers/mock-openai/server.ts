@@ -914,9 +914,7 @@ async function buildResponsesPayload(
     }
   }
   if (terminalCompletionCase && terminalTurn?.kind === "completion") {
-    const visibleRepresentation =
-      terminalCompletionCase === "silent" ? QA_SUBAGENT_TERMINAL_MARKERS.silent : undefined;
-    if (visibleRepresentation) {
+    if (terminalCompletionCase === "silent") {
       if (completedToolName === "message") {
         return buildAssistantEvents("");
       }
@@ -931,15 +929,17 @@ async function buildResponsesPayload(
           );
         return buildToolCallEventsWithArgs("message", {
           action: "send",
-          message: visibleRepresentation,
+          message: QA_SUBAGENT_TERMINAL_MARKERS.silent,
           ...(requiresFinal ? { final: true } : {}),
         });
       }
-      return buildAssistantEvents(visibleRepresentation);
+      return buildAssistantEvents(QA_SUBAGENT_TERMINAL_MARKERS.silent);
     }
     // Empty output exercises direct fallback. Exact NO_REPLY is intentional
     // silence and must not be used as a missing-answer fixture.
-    return buildAssistantEvents("");
+    return terminalCompletionCase === "fallback"
+      ? buildFailedResponseEvents()
+      : buildAssistantEvents("");
   }
   const terminalWorkerCase = terminalTurn?.kind === "worker" ? terminalTurn.caseName : undefined;
   if (terminalWorkerCase) {

@@ -61,11 +61,15 @@ export function registerCommandReplyPolicyTests({
         const sessionEntry = makeSessionEntry(`session-${messageChannel}`);
         const sessionStore = await seedSessionStore(sessionKey, sessionEntry);
         const expectation =
-          replyExpectation === "optional"
+          sourceTool === "subagent_settle"
             ? "optional"
-            : privateCompletion || sessionKey.includes(":subagent:") || messageChannel === "webchat"
-              ? "result-required"
-              : (replyExpectation ?? (allowSilence ? "optional" : "required"));
+            : replyExpectation === "optional"
+              ? "optional"
+              : privateCompletion ||
+                  sessionKey.includes(":subagent:") ||
+                  messageChannel === "webchat"
+                ? "result-required"
+                : (replyExpectation ?? (allowSilence ? "optional" : "required"));
         const resultRequired = expectation === "result-required";
         if (cli) {
           cliRunner.mockImplementationOnce(runPreparedAttempt);
