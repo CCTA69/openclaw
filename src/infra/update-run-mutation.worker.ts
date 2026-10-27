@@ -113,7 +113,7 @@ export function recordUpdateRunMutationInWorker(
   };
   let entered = false;
   let ownedWriter: ExistingOpenClawStateWriter | undefined;
-  function mutate(): UpdateRunWriteOperations["updateRuns.recordStep"]["output"] {
+  const mutate = (): UpdateRunWriteOperations["updateRuns.recordStep"]["output"] => {
     const stateWriter = ownedWriter ?? writer();
     const writeOptions = updateRunWriteOptions({ ...options, writeCapture });
     return stateWriter.run(({ db }) => {
@@ -166,7 +166,7 @@ export function recordUpdateRunMutationInWorker(
       assertCurrent("commit");
       return { kind: "recorded", record, ...(updateResult ? { updateResult } : {}) };
     }, writeOptions);
-  }
+  };
   try {
     assertCurrent("transaction");
     // Captured updates settle native close on this reply, not a later worker retirement.
