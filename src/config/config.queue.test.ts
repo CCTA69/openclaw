@@ -61,7 +61,11 @@ describe("queue configuration", () => {
     if (!result.ok) {
       return;
     }
-    expect(result.config.messages?.queue).toEqual(queue);
+    expect(result.config.messages?.queue).toEqual({
+      ...queue,
+      allowCollaborativeSteering: true,
+      collaborativeSteeringFallback: "queue",
+    });
     expect(result.warnings.filter(({ path }) => path.startsWith("messages.queue."))).toEqual([
       {
         path: "messages.queue.byChannel.telegarm",

@@ -78,7 +78,11 @@ function steeringConfig({ context }: Fixture) {
   const config = withFullRuntimeReplyConfig(context.getRuntimeConfig());
   config.messages = {
     ...config.messages,
-    queue: { mode: "steer", debounceMsByChannel: { webchat: 0 } },
+    queue: {
+      mode: "steer",
+      allowCollaborativeSteering: false,
+      debounceMsByChannel: { webchat: 0 },
+    },
   };
   context.getRuntimeConfig = () => config;
   return config;
