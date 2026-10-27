@@ -138,6 +138,7 @@ final class OpenClawSnapshotUITests: XCTestCase {
             if keyboard.exists {
                 XCTAssertTrue(keyboard.waitForNonExistence(timeout: 3))
             }
+            XCTAssertTrue(app.buttons["Mermaid diagram"].waitForExistence(timeout: 8))
         }
     }
 

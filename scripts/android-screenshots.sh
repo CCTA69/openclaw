@@ -648,6 +648,13 @@ wait_for_scene_ready() {
         continue
       fi
       if grep -Fq "$marker" "$dump_path"; then
+        # The image description exists only after the native renderer succeeds;
+        # source text or a loading/error card must not qualify as diagram proof.
+        if [[ "$FORM_FACTOR" == "phone" && "$scene" == "chat" ]] &&
+          ! grep -Fq 'content-desc="Mermaid diagram"' "$dump_path"; then
+          sleep 1
+          continue
+        fi
         return
       fi
     fi
