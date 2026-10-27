@@ -13,38 +13,53 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 const enabled = process.env.OPENCLAW_TEST_CORPORATE_DOCKER_EFFECTS === "1";
 const runFile = promisify(execFile);
 
-if (enabled) {
-  // Compile the real subprocess generation during collection, not the test deadline.
-  // The ordinary opt-out path still loads no Gateway or container runtime.
-  await import("../test-utils/prepare-compiled-subprocesses.js");
-  await import("../agents/prepared-model-runtime.js");
-  await import("./server-start.js");
-}
-
 it.skipIf(!enabled)(
   "confines actual corporate Gateway tool effects with the real Docker sandbox",
   { timeout: 120_000 },
   async ({ signal }) => {
+    console.info("[corporate-effect-proof] phase=case-entered");
     const { readRequestText } = await import("../../test/helpers/gateway-integration-fixtures.js");
     const { writeOpenAiResponsesText } = await import("../../test/helpers/openai-responses-sse.js");
     const { withinTest } = await import("../../test/helpers/promise.js");
-    const { createOpenClawTestState } = await import("../test-utils/openclaw-test-state.js");
+    const { createOpenClawTestInstance } =
+      await import("../../test/helpers/openclaw-test-instance.js");
+    const { acquireGatewayTestClient } = await import("../../test/helpers/gateway-client.js");
+    const { loadOrCreateDeviceIdentity } = await import("../infra/device-identity.js");
+    const { listKnownProviderAuthEnvVarNamesCore } =
+      await import("../secrets/provider-env-vars.js");
+    const { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } =
+      await import("../utils/message-channel.js");
     const { closeProvider, listenProvider, writeToolCall } =
       await import("./gateway-provider-fixture.test-support.js");
-    const { disconnectGatewayClient, startGatewayWithClient } =
-      await import("./test-helpers.e2e.js");
-    const { kernelGatewayTestStateOptions } = await import("./test-helpers.env.js");
     const { buildMockOpenAiResponsesProvider } = await import("./test-openai-responses-model.js");
     const { DEFAULT_SANDBOX_IMAGE } = await import("../agents/sandbox/constants.js");
     const docker = async (...args: string[]) =>
       (await runFile("docker", args, { timeout: 20_000, maxBuffer: 1024 * 1024 })).stdout.trim();
     // Fail setup, never silently skip an explicitly requested but unavailable backend.
+    console.info("[corporate-effect-proof] phase=backend-preflight");
     await docker("info", "--format", "{{.ID}}");
     await docker("image", "inspect", DEFAULT_SANDBOX_IMAGE);
 
     await using cleanup = new AsyncDisposableStack();
-    const state = await createOpenClawTestState(kernelGatewayTestStateOptions("corporate-effects"));
-    cleanup.defer(() => state.cleanup());
+    // The supervised built Gateway owns its runtime outside the Vitest module graph.
+    const instance = await createOpenClawTestInstance({
+      name: "corporate-effects-" + randomUUID().slice(0, 8),
+      signal,
+      entrypoint: ["dist/index.js"],
+      stopTimeoutMs: 10_000,
+      env: {
+        ...Object.fromEntries(
+          listKnownProviderAuthEnvVarNamesCore().map((name) => [name, undefined]),
+        ),
+        OPENCLAW_TEST_MINIMAL_GATEWAY: "0",
+        OPENCLAW_SKIP_PROVIDERS: undefined,
+        OPENCLAW_AGENT_RUNTIME: undefined,
+        OPENCLAW_BUNDLED_PLUGINS_DIR: undefined,
+        OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR: undefined,
+      },
+    });
+    cleanup.defer(() => instance.cleanup());
+    const state = instance.state;
     const sessionKey = `agent:main:corporate-effects-${randomUUID()}`;
     const sandboxPrefix = `oc-corp-${randomUUID().slice(0, 12)}-`;
     // The host sentinels are siblings of, never inside, the mounted workspace.
@@ -185,6 +200,12 @@ it.skipIf(!enabled)(
       "corporate-effects",
     );
     const cfg = {
+      gateway: {
+        mode: "local",
+        port: instance.port,
+        auth: { mode: "token", token: instance.gatewayToken },
+        controlUi: { enabled: false },
+      },
       security: { preset: "corporate" },
       agents: {
         defaults: {
@@ -219,15 +240,39 @@ it.skipIf(!enabled)(
         await docker("rm", "-f", ...ids.split(/\s+/));
       }
     });
-    const gateway = await startGatewayWithClient({
-      cfg,
-      configPath: state.configPath,
-      token: "synthetic-corporate-gateway-token",
-    });
-    cleanup.defer(() => gateway.server.close({ reason: "corporate effect acceptance complete" }));
-    cleanup.defer(() => disconnectGatewayClient(gateway.client));
-    await gateway.server.startupSettled;
-    const accepted = await gateway.client.request<{ status: string; runId: string }>("chat.send", {
+    cleanup.defer(() => instance.stopGateway());
+    await state.writeConfig(cfg);
+    instance.env.OPENCLAW_GATEWAY_PORT = String(instance.port);
+    console.info("[corporate-effect-proof] phase=start-cli-gateway");
+    await instance.startGateway();
+    const client = await acquireGatewayTestClient(
+      {
+        url: instance.url,
+        token: instance.gatewayToken,
+        clientName: GATEWAY_CLIENT_NAMES.CLI,
+        mode: GATEWAY_CLIENT_MODES.BACKEND,
+        requestTimeoutMs: 100_000,
+        scopes: [
+          "operator.admin",
+          "operator.read",
+          "operator.write",
+          "operator.approvals",
+          "operator.pairing",
+        ],
+        deviceIdentity: loadOrCreateDeviceIdentity({
+          path: state.statePath("proof-client", "client", "credentials.sqlite"),
+        }),
+      },
+      {
+        signal,
+        timeoutMs: 15_000,
+        timeoutMessage: "corporate proof client connect timeout",
+        closeMessage: "corporate proof client closed",
+      },
+    );
+    cleanup.defer(() => client.stopAndWait());
+    console.info("[corporate-effect-proof] phase=dispatch-tools");
+    const accepted = await client.request<{ status: string; runId: string }>("chat.send", {
       sessionKey,
       message: "Run the synthetic corporate effect acceptance sequence.",
       deliver: false,
@@ -235,7 +280,7 @@ it.skipIf(!enabled)(
     });
     expect(accepted).toMatchObject({ status: "started", runId: expect.any(String) });
     expect(
-      await gateway.client.request("agent.wait", { runId: accepted.runId, timeoutMs: 90_000 }),
+      await client.request("agent.wait", { runId: accepted.runId, timeoutMs: 90_000 }),
     ).toMatchObject({ status: "ok" });
     expect(errors).toEqual([]);
     expect(outputs).toHaveLength(steps.length);
@@ -264,7 +309,7 @@ it.skipIf(!enabled)(
     expect(hostProcess.exitCode).toBeNull();
     expect(hostProcess.signalCode).toBeNull();
     expect(hostHttpHits).toBe(1);
-    const history = await gateway.client.request<{ messages: unknown[] }>("chat.history", {
+    const history = await client.request<{ messages: unknown[] }>("chat.history", {
       sessionKey,
     });
     expect(JSON.stringify(history.messages)).toContain(
