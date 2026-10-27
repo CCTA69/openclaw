@@ -263,6 +263,12 @@ and real local exec tools; it checks harness plumbing, not real-model compliance
 with the complete scenario mix. Check recorded tool events before claiming that
 any requested behavior was actually exercised.
 
+Graceful restarts resume running root sessions through ordinary inputs. Deliberate
+SIGKILL writes no resume markers: unanswered inputs sent before that crash in its
+active sessions are recorded as accepted crash loss. New post-restart inputs must
+still settle. The dry provider inspects its exact effect marker before appending
+again, following the resume instruction without adding runtime effect replay.
+
 Use `--candidate /path/to/reviewed-checkout` to replay this tooling against another
 revision. Prepare that checkout's build first; `dist/entry.js` is required, matching
 the existing controller's built-candidate contract. Use isolated state, a unique
