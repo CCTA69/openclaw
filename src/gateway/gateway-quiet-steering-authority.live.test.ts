@@ -52,6 +52,7 @@ async function providerRelay(signal: AbortSignal) {
   const claim = await acquireTestPortBlock({ offsets: [0] });
   const holds: HeldRequest[] = [];
   const allHolds: HeldRequest[] = [];
+  const preparationHolds: HeldRequest[] = [];
   const requests: Record<string, unknown>[] = [];
   const failures: string[] = [];
   const pending = new Set<Promise<void>>();
@@ -66,7 +67,7 @@ async function providerRelay(signal: AbortSignal) {
       requests.push(parsed);
       // No-tool preparation completions can precede the receiving agent's request.
       // Hold only its foreground tool-capable request, not the preparation phase.
-      const hold = Array.isArray(parsed.tools) ? holds.shift() : undefined;
+      const hold = Array.isArray(parsed.tools) ? holds.shift() : preparationHolds.shift();
       if (hold) {
         hold.entered.resolve(parsed);
         await withinTest(hold.release.promise, signal);
@@ -122,6 +123,15 @@ async function providerRelay(signal: AbortSignal) {
     url: "http://127.0.0.1:" + claim.port + "/v1",
     requests,
     failures,
+    armPreparation() {
+      const hold = {
+        entered: createDeferred<Record<string, unknown>>(),
+        release: createDeferred(),
+      };
+      preparationHolds.push(hold);
+      allHolds.push(hold);
+      return hold;
+    },
     arm() {
       const hold = {
         entered: createDeferred<Record<string, unknown>>(),
@@ -492,6 +502,59 @@ describeLive("quiet steering with real caller authority", () => {
       console.error(
         "[quiet-live] real Gateway/provider warmup completed; pid=" + instance.child?.pid,
       );
+
+      await caseRun("same requester input during preparation reaches model", async () => {
+        const key = await create("preparation");
+        const gate = relay.armPreparation();
+        const offset = relay.requests.length;
+        const root = await send(
+          high,
+          key,
+          "First use read on report.txt. Then reply with PREPARATION_FIRST and follow any additional user instruction.",
+        );
+        const request = await withinTest(gate.entered.promise, signal);
+        expect(request.model).toBe("gpt-5.4");
+        expect(request.tools).toBeUndefined();
+        const early = await send(
+          high,
+          key,
+          "Additional instruction: also include EARLY_PREPARATION_ANSWER in your final response. Do not use tools.",
+        );
+        const pending = await history(key, [early.runId]);
+        console.error(
+          "[preparation-proof] admitted " +
+            JSON.stringify({
+              root: root.runId,
+              input: early.runId,
+              receipt: pending.inputReceipts,
+              requestKeys: Object.keys(request),
+            }),
+        );
+        gate.release.resolve();
+        await waitRun(root.runId);
+        await waitRun(early.runId);
+        const after = await history(key, [early.runId]);
+        const calls = relay.requests.slice(offset).map((call) => ({
+          tools: Array.isArray(call.tools),
+          earlyInput: JSON.stringify(call.input).includes("EARLY_PREPARATION_ANSWER"),
+        }));
+        const answers = after.messages
+          .filter((message) => message.role === "assistant")
+          .map(safeAssistantText);
+        console.error(
+          "[preparation-proof] completed " +
+            JSON.stringify({ calls, answers, receipts: after.inputReceipts }),
+        );
+        expect(calls.some((call) => call.tools && call.earlyInput)).toBe(true);
+        expect(answers.some((answer) => answer.includes("EARLY_PREPARATION_ANSWER"))).toBe(true);
+        return {
+          root: root.runId,
+          input: early.runId,
+          calls,
+          answers,
+          receipt: after.inputReceipts,
+        };
+      });
 
       await caseRun("solo compatible steer", async () => {
         const key = await create("solo");
