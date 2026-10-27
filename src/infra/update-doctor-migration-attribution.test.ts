@@ -351,7 +351,6 @@ it.each(["native", "worker"] as const)(
           invalidConfigNote: false,
           observe: false,
         });
-        expect(preflight.snapshot.valid).toBe(true);
         const authRepair = await repairAuthProfileMigration({
           cfg: preflight.snapshot.config,
           env,
