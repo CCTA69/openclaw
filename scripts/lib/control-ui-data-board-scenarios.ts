@@ -528,6 +528,8 @@ function galleryRpcLatencyScenario(
 ): InteractionScenario {
   const firstRender = action === "first-render";
   let measuring = false;
+  let delayedGalleryLists = 0;
+  let delayedPreviews = 0;
   return {
     ...scenario,
     id: `${scenario.id}-100ms`,
@@ -536,15 +538,25 @@ function galleryRpcLatencyScenario(
     createRequestHandlers: (defaults) => {
       // The harness installs fresh handlers for each serial observation, before setup.
       measuring = false;
+      delayedGalleryLists = 0;
+      delayedPreviews = 0;
       const sample = boardSnapshot();
       return {
         ...(firstRender
           ? {
               "sessions.list": async (params: unknown) => {
-                if (measuring && isRecord(params) && params.source === "dashboard") {
+                if (
+                  measuring &&
+                  isRecord(params) &&
+                  params.source === "dashboard" &&
+                  params.rowMode === "dashboard" &&
+                  params.hasBoard === true &&
+                  params.archived === "all"
+                ) {
                   await new Promise<void>((resolve) => {
                     setTimeout(resolve, 100);
                   });
+                  delayedGalleryLists += 1;
                 }
                 return defaults["sessions.list"]!(params);
               },
@@ -563,6 +575,7 @@ function galleryRpcLatencyScenario(
             await new Promise<void>((resolve) => {
               setTimeout(resolve, 100);
             });
+            delayedPreviews += 1;
           }
           return galleryPreviewSnapshot(sample, params.sessionKey);
         },
@@ -570,16 +583,28 @@ function galleryRpcLatencyScenario(
     },
     prepare: async (page, gateway) => {
       await scenario.prepare(page, gateway);
+      // Pages has a separate active-only catalog under the same source.
       if (
         firstRender &&
-        (await gateway.getRequests("sessions.list", { source: "dashboard" })).length > 0
+        (
+          await gateway.getRequests("sessions.list", {
+            source: "dashboard",
+            rowMode: "dashboard",
+            hasBoard: true,
+            archived: "all",
+          })
+        ).length > 0
       ) {
         throw new Error("Gallery list was fetched before the measured navigation");
       }
     },
     run: async (page, gateway) => {
       measuring = true;
-      return scenario.run(page, gateway);
+      const evidence = await scenario.run(page, gateway);
+      if ((firstRender && delayedGalleryLists === 0) || delayedPreviews === 0) {
+        throw new Error("Expected measured Gallery RPC response delays");
+      }
+      return { ...evidence, delayedGalleryLists, delayedPreviews };
     },
   };
 }
