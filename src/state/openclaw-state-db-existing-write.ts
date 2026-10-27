@@ -52,15 +52,7 @@ import { runManagedStateTransaction } from "./openclaw-state-db-transaction.js";
 import { resolveDatabasePath } from "./openclaw-state-db.paths.js";
 import { assertOpenClawStateWriteAllowed } from "./openclaw-state-ownership.js";
 
-type ExistingWriteOptions = OpenClawStateDatabaseOptions & {
-  busyTimeoutMs?: number;
-  sqliteWrite?: <T>(
-    db: DatabaseSync,
-    pathname: string,
-    assertCurrent: () => void,
-    operation: () => T,
-  ) => T;
-};
+type ExistingWriteOptions = OpenClawStateDatabaseOptions & { busyTimeoutMs?: number };
 type ExistingWriteContract = Pick<SqliteTransactionOptions, "beginLockFailureReporting"> & {
   schemaSql: string;
   schemaCompatibility?: SqliteSchemaCompatibility;
@@ -227,85 +219,79 @@ function createExistingOpenClawStateWriter(
         currentOptions.busyTimeoutMs ?? contract.busyTimeoutMs ?? OPENCLAW_SQLITE_BUSY_TIMEOUT_MS;
       setSqliteBusyTimeout(db, busyTimeoutMs);
       admitStateSchemaFacts(db, pathname);
-      const transaction = () =>
-        runManagedStateTransaction(
-          db,
-          () => {
-            assertSameFile();
-            assertOpenClawStateWriteAllowed({
-              database: db,
-              databasePath: pathname,
-              env: currentEnv,
-            });
-            const priorVersion = admission.get(db);
-            const needsAdmission = priorVersion === undefined;
-            if (existingSchema) {
-              assertExistingOpenClawStateRuntimeSchema(db, pathname);
-            }
-            const validate = () =>
-              assertExistingOpenClawStateSchema(
-                db,
-                pathname,
-                needsAdmission && contract.initializeAdditiveSchema
-                  ? undefined
-                  : contract.schemaSql,
-                contract.schemaCompatibility,
-                contract.integrityCheck,
-              );
-            let version: number;
-            let recoveryChanges: string[] = [];
-            if (contract.recoverTaskDeliveryOrphans) {
-              // Requested recovery is work, not a cached schema-admission fact.
-              try {
-                validate();
-              } catch (error) {
-                if (!(error instanceof SqliteRepairableForeignKeyError)) {
-                  throw error;
-                }
+      return runManagedStateTransaction(
+        db,
+        () => {
+          assertSameFile();
+          assertOpenClawStateWriteAllowed({
+            database: db,
+            databasePath: pathname,
+            env: currentEnv,
+          });
+          const priorVersion = admission.get(db);
+          const needsAdmission = priorVersion === undefined;
+          if (existingSchema) {
+            assertExistingOpenClawStateRuntimeSchema(db, pathname);
+          }
+          const validate = () =>
+            assertExistingOpenClawStateSchema(
+              db,
+              pathname,
+              needsAdmission && contract.initializeAdditiveSchema ? undefined : contract.schemaSql,
+              contract.schemaCompatibility,
+              contract.integrityCheck,
+            );
+          let version: number;
+          let recoveryChanges: string[] = [];
+          if (contract.recoverTaskDeliveryOrphans) {
+            // Requested recovery is work, not a cached schema-admission fact.
+            try {
+              validate();
+            } catch (error) {
+              if (!(error instanceof SqliteRepairableForeignKeyError)) {
+                throw error;
               }
-              recoveryChanges = recoverOrphanTaskDeliveryRows(db, pathname);
-              version = validate();
-            } else {
-              version = priorVersion ?? validate();
             }
-            if (needsAdmission && contract.initializeAdditiveSchema) {
-              // Validate present objects before first use: CREATE IF NOT EXISTS
-              // must not hide drift or repair an incomplete existing table.
-              assertSqliteSchemaContains(db, pathname, contract.schemaSql, {
-                ...contract.schemaCompatibility,
-                allowedMissingTables: getCanonicalSqliteTableNames(contract.schemaSql),
-              });
-              admitSqliteSchema(db);
-              ensureAdditiveSchema?.(db);
-              assertSqliteSchemaContains(
-                db,
-                pathname,
-                contract.schemaSql,
-                contract.schemaCompatibility,
-              );
-            }
-            if (needsAdmission) {
-              admitSqliteSchema(db);
-              admission.publish(db, version);
-            }
-            // Internal callers own their declared schema and only mutate its rows here.
-            const value = operation({ db, path: pathname, recoveryChanges });
-            assertSameFile();
-            if (contract.recoverTaskDeliveryOrphans) {
-              assertSqliteIntegrity(db, pathname);
-            }
-            return value;
-          },
-          {
-            beginLockFailureReporting: contract.beginLockFailureReporting,
-            busyTimeoutMs,
-            databaseLabel: pathname,
-            operationLabel: contract.operationLabel,
-          },
-        );
-      return currentOptions.sqliteWrite
-        ? currentOptions.sqliteWrite(db, pathname, assertSameFile, transaction)
-        : transaction();
+            recoveryChanges = recoverOrphanTaskDeliveryRows(db, pathname);
+            version = validate();
+          } else {
+            version = priorVersion ?? validate();
+          }
+          if (needsAdmission && contract.initializeAdditiveSchema) {
+            // Validate present objects before first use: CREATE IF NOT EXISTS
+            // must not hide drift or repair an incomplete existing table.
+            assertSqliteSchemaContains(db, pathname, contract.schemaSql, {
+              ...contract.schemaCompatibility,
+              allowedMissingTables: getCanonicalSqliteTableNames(contract.schemaSql),
+            });
+            admitSqliteSchema(db);
+            ensureAdditiveSchema?.(db);
+            assertSqliteSchemaContains(
+              db,
+              pathname,
+              contract.schemaSql,
+              contract.schemaCompatibility,
+            );
+          }
+          if (needsAdmission) {
+            admitSqliteSchema(db);
+            admission.publish(db, version);
+          }
+          // Internal callers own their declared schema and only mutate its rows here.
+          const value = operation({ db, path: pathname, recoveryChanges });
+          assertSameFile();
+          if (contract.recoverTaskDeliveryOrphans) {
+            assertSqliteIntegrity(db, pathname);
+          }
+          return value;
+        },
+        {
+          beginLockFailureReporting: contract.beginLockFailureReporting,
+          busyTimeoutMs,
+          databaseLabel: pathname,
+          operationLabel: contract.operationLabel,
+        },
+      );
     },
     assertSettled() {
       assertSameFile();

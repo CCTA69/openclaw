@@ -186,9 +186,8 @@ async function measureLedgerWrites() {
   const state: typeof import("../../src/state/openclaw-state-db.js") = await load(
     "src/state/openclaw-state-db.ts",
   );
-  const generations: typeof import("../../src/infra/update-database-generations.js") = await load(
-    "src/infra/update-database-generations.ts",
-  );
+  const generationReader: typeof import("../../src/infra/update-database-generations.js") =
+    await load("src/infra/update-database-generations.ts");
   const receipts: typeof import("../../src/cli/update-cli/update-command-database-receipts.js") =
     await load("src/cli/update-cli/update-command-database-receipts.ts");
   try {
@@ -200,7 +199,7 @@ async function measureLedgerWrites() {
         const { runId } = ledger.createUpdateRun({ trigger: "cli" }, { env });
         await state.closeOpenClawStateDatabaseAsync();
         const pathname = path.join(env.OPENCLAW_STATE_DIR, "state", "openclaw.sqlite");
-        const sourceGenerations = generations.readUpdateDatabaseGenerations([pathname]);
+        const sourceGenerations = generationReader.readUpdateDatabaseGenerations([pathname]);
         const backup: UpdateDatabaseBackup = {
           directory: fixtureRoot,
           databases: [],
@@ -209,11 +208,6 @@ async function measureLedgerWrites() {
           sourceGenerations,
           warnings: [],
         };
-        // Old drivers have the same captured backup but cannot attribute parent writes.
-        const writeCapture =
-          captured && receipts.createUpdateDatabaseWriteCapture
-            ? receipts.createUpdateDatabaseWriteCapture(backup, () => {})
-            : undefined;
         // Cold is the first write after state handles close, not a cold module load.
         for (let sample = 0; sample <= samples; sample += 1) {
           const temperature = sample === 0 ? "cold" : "warm";
@@ -225,13 +219,16 @@ async function measureLedgerWrites() {
             endedAtMs: sample + 1,
           };
           if (owner === "native") {
-            ledger.recordUpdateRunStep(runId, step, { env, writeCapture });
+            ledger.recordUpdateRunStep(runId, step, { env });
           } else {
-            await worker.recordUpdateRunStepAsync(runId, step, { env, writeCapture });
+            await worker.recordUpdateRunStepAsync(runId, step, { env });
+          }
+          if (captured && receipts.observeUpdateParentDatabaseWrites) {
+            await receipts.observeUpdateParentDatabaseWrites(backup, { env });
           }
           phase("verification");
           assert.equal(backup.restoreRefusal, undefined);
-          if (writeCapture) {
+          if (captured && receipts.observeUpdateParentDatabaseWrites) {
             assert.ok(backup.migration);
           }
           console.log(
@@ -244,7 +241,7 @@ async function measureLedgerWrites() {
               temperature,
               sample,
               actions: 1,
-              attributionAvailable: Boolean(receipts.createUpdateDatabaseWriteCapture),
+              attributionAvailable: Boolean(receipts.observeUpdateParentDatabaseWrites),
             }),
           );
         }

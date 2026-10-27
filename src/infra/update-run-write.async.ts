@@ -5,7 +5,6 @@ import {
   hasCommandProcessCleanupError,
 } from "../process/exec-result.js";
 import { trackAsyncWork } from "../shared/async-work-scope.js";
-import { isStatePostgres } from "../state/openclaw-state-db-engine.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
 import { runOpenClawStateWorkerOperation } from "../state/openclaw-state-worker-store.js";
@@ -64,14 +63,9 @@ async function recordUpdateRunMutationAsync(
     captured.assertCurrent?.();
   };
   assertCurrent();
-  const capture = captured.writeCapture;
-  const path = context.admission.databasePath;
-  const expected = !isStatePostgres() && capture?.expected(path);
-  const writeGeneration = typeof expected === "string" ? { path, before: expected } : undefined;
   const command = structuredClone(
     createCommand({
       runId,
-      writeGeneration,
       redactionFacts: captureUpdateRunRedactionFacts(captured.env),
       requireNoRecovery: captured.requireNoRecovery,
       busyTimeoutMs: captured.busyTimeoutMs,
@@ -85,37 +79,22 @@ async function recordUpdateRunMutationAsync(
       context.admission.databasePath,
     ]),
   });
-  const completion = pending
-    .then((reply) => {
-      if (writeGeneration && capture) {
-        assertCurrent();
-        const proof = reply?.writeGeneration;
-        if (!proof || proof.path !== path || proof.before !== writeGeneration.before) {
-          throw new Error("Update ledger reply omitted its captured write generation.");
-        }
-        capture.accept(path, proof.before, proof.after);
-      }
-      return reply;
-    })
-    .catch((error: unknown) => {
-      if (
-        !hasCommandProcessCleanupError(error) &&
-        isSqliteWorkerError(error, "overloaded") &&
-        command.type === "updateRuns.recordStep" &&
-        !isRequiredUpdateRunStep(command.input.step)
-      ) {
-        // Broker overload certifies non-dispatch; only advisory receipts may be dropped.
-        assertCurrent();
-        return { kind: "bookkeeping-skipped" as const };
-      }
-      if (writeGeneration) {
-        capture?.refuse("Update ledger write settlement could not be attributed.");
-      }
-      if (hasSqliteWorkerOutcomeUnknown(error) && !hasCommandProcessCleanupError(error)) {
-        throw new CommandProcessCleanupError({ cause: error });
-      }
-      throw error;
-    });
+  const completion = pending.catch((error: unknown) => {
+    if (hasSqliteWorkerOutcomeUnknown(error) && !hasCommandProcessCleanupError(error)) {
+      throw new CommandProcessCleanupError({ cause: error });
+    }
+    if (
+      !hasCommandProcessCleanupError(error) &&
+      isSqliteWorkerError(error, "overloaded") &&
+      command.type === "updateRuns.recordStep" &&
+      !isRequiredUpdateRunStep(command.input.step)
+    ) {
+      // Broker overload certifies non-dispatch; only advisory receipts may be dropped.
+      assertCurrent();
+      return { kind: "bookkeeping-skipped" as const };
+    }
+    throw error;
+  });
   captured.retainSettlement?.(completion.then(() => undefined));
   const reply = await completion;
   assertCurrent();

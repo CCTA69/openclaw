@@ -63,7 +63,7 @@ export async function finishUpdate(
   params: FinishUpdateParams,
   { beforeFinalization, ...options }: FinishUpdateOptions = {},
 ): Promise<UpdateRunResult> {
-  const captured = terminal.captureUpdateFinalization(params, options.onGatewayStartAttempted);
+  const captured = terminal.captureUpdateFinalization(params);
   return await terminal.withUpdateProgressSettlement(
     params,
     beforeFinalization,
@@ -73,7 +73,11 @@ export async function finishUpdate(
 
 async function finishSettledUpdate(
   params: FinishUpdateParams,
-  { candidateRuntime = false, adoptedFinalization }: FinishUpdateOptions,
+  {
+    candidateRuntime = false,
+    adoptedFinalization,
+    onGatewayStartAttempted: observeGatewayStartAttempted,
+  }: FinishUpdateOptions,
   captured: ReturnType<typeof terminal.captureUpdateFinalization>,
   progressFailure?: { cause: unknown },
 ): Promise<UpdateRunResult> {
@@ -82,7 +86,7 @@ async function finishSettledUpdate(
   let gatewayStartAttempted: "install" | "restart" | undefined;
   const onGatewayStartAttempted = (action: "install" | "restart" = "restart") => {
     gatewayStartAttempted = gatewayStartAttempted === "restart" ? gatewayStartAttempted : action;
-    captured.onGatewayStartAttempted();
+    observeGatewayStartAttempted?.();
   };
   const definitionRecovery: UpdateServiceDefinitionRecovery = {};
   const parkForegroundOrigin = () => parkForegroundUpdateForActivation(params, assertCurrent);

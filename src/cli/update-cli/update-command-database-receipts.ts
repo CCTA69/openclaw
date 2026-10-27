@@ -1,44 +1,54 @@
 import { sha256Hex } from "../../infra/crypto-digest.js";
 import type { UpdateDatabaseBackup } from "../../infra/update-database-backup.js";
 import type { UpdateDatabaseWriteReceipt } from "../../infra/update-database-generations.js";
-import type { UpdateDoctorMigrationCapture } from "../../infra/update-doctor-migration-attribution.js";
 import {
   UPDATE_DOCTOR_HISTORICAL_SCANS_ENV,
   type UpdateDoctorHistoricalScans,
 } from "../../infra/update-doctor-scan-receipts.js";
 import type { UpdateStepResult } from "../../infra/update-step-result.js";
+import { isStatePostgres } from "../../state/openclaw-state-db-engine.js";
+import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 
 // The installed driver records the first Doctor receipt here. Its existing backup
 // object is the operation identity shared with post-plugin convergence. No durable cache.
 const historicalScans = new WeakMap<UpdateDatabaseBackup, UpdateDoctorHistoricalScans>();
 
-export function createUpdateDatabaseWriteCapture(
+export async function observeUpdateParentDatabaseWrites(
   backup: UpdateDatabaseBackup,
-  assertCurrent: () => void,
-): UpdateDoctorMigrationCapture {
-  const expected = () => backup.migration?.to ?? backup.sourceGenerations;
-  return {
-    expected: (pathname) => expected()[pathname],
-    assertCurrent,
-    refuse: (message) => {
-      backup.restoreRefusal ??= message;
-    },
-    accept: (pathname, before, after) => {
-      assertCurrent();
-      const generations = expected();
-      if (generations[pathname] === undefined || generations[pathname] !== before) {
-        backup.restoreRefusal ??= "databases changed after snapshot capture; the writer is unknown";
-      }
-      if (!backup.restoreRefusal) {
-        backup.migration = {
-          name: backup.migration?.name ?? "update ledger writes",
-          backup: backup.directory,
-          from: backup.migration?.from ?? backup.sourceGenerations,
-          to: { ...generations, [pathname]: after },
-        };
-      }
-    },
-  };
+  options: {
+    env: NodeJS.ProcessEnv;
+    root?: string;
+    signal?: AbortSignal;
+    assertCurrent?: () => void;
+  },
+): Promise<void> {
+  const pathname = resolveOpenClawStateSqlitePath(options.env);
+  if (isStatePostgres() || !Object.hasOwn(backup.sourceGenerations, pathname)) {
+    return;
+  }
+  options.assertCurrent?.();
+  try {
+    const { readUpdateDatabaseGenerationsIsolated } =
+      await import("../../infra/update-candidate-state.js");
+    const generations = await readUpdateDatabaseGenerationsIsolated([pathname], options);
+    options.assertCurrent?.();
+    if (typeof generations[pathname] !== "string") {
+      throw new Error("Update ledger database is unavailable before Doctor admission.");
+    }
+    // Like native Doctor close (#177831), this can absorb raw outside writes during
+    // the update window to the state database the parent itself writes.
+    if (!backup.restoreRefusal) {
+      backup.migration = {
+        name: backup.migration?.name ?? "update ledger writes",
+        backup: backup.directory,
+        from: backup.migration?.from ?? backup.sourceGenerations,
+        to: { ...(backup.migration?.to ?? backup.sourceGenerations), ...generations },
+      };
+    }
+  } catch (error) {
+    backup.restoreRefusal ??= "update ledger database generation could not be observed";
+    throw error;
+  }
 }
 
 export function consumeUpdateDoctorHistoricalScans(

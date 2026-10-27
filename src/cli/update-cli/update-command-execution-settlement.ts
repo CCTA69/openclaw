@@ -49,7 +49,6 @@ export async function settleMutableUpdateResult(
   const doctorSettled =
     settlement.doctorEntered && !hasCommandProcessCleanupError(settlement.failure?.cause);
   if (databaseBackup && originalRun && result.status === "error" && doctorSettled) {
-    originalRun.writeCapture = undefined;
     // Execution has not entered finalization or admitted any candidate Gateway.
     // Restore before schema inspection can hand an incompatible ledger to the candidate.
     await restoreFailedUpdateDatabases({

@@ -63,6 +63,7 @@ import { readUpdateTargetCliOptions } from "./update-command-cli-options.js";
 import { readUpdateConfigSnapshot } from "./update-command-config-snapshot.js";
 import {
   consumeUpdateDoctorHistoricalScans,
+  observeUpdateParentDatabaseWrites,
   recordUpdateDatabaseWrites,
 } from "./update-command-database-receipts.js";
 import {
@@ -263,6 +264,13 @@ export async function runUpdateFinalizationDoctorInFreshProcess(params: {
     if (doctorConfigWrites && executorFence && runId) {
       const snapshot = await readUpdateConfigSnapshot(resolveConfigPath());
       assertCurrent();
+      if (params.databaseBackup) {
+        await observeUpdateParentDatabaseWrites(params.databaseBackup, {
+          env: run?.env ?? baseEnv,
+          root: params.root,
+          assertCurrent,
+        });
+      }
       child = await withUpdateDoctorChild(
         {
           root: params.root,

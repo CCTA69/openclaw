@@ -77,8 +77,6 @@ export type UpdateCommandOptions = Pick<UpdateRunResult, "sourceRuntimePrepared"
     /** Explicit operator budget, minted once by this invocation’s admission. */
     deadline?: import("../daemon-cli/restart-health-deadline.js").GatewayRestartDeadline;
     env: NodeJS.ProcessEnv;
-    /** In-process capture authority; never serialized to a candidate runtime. */
-    writeCapture?: import("../../infra/update-doctor-migration-attribution.js").UpdateDoctorMigrationCapture;
     /** Candidate-reported admission checks; execution authority remains installed-owned. */
     candidateAdmissionChecks?: readonly string[];
     /** Completion routing only; mutation authority remains with the live executor. */

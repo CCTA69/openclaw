@@ -89,11 +89,14 @@ Changed committed data or write evidence still refuses migration and automatic
 restoration. The candidate must contain this repair.
 
 The post-plugin Doctor runs for plugin changes, deferred model retirement, and
-deferred plugin migrations. Update-owned ledger writes stay in the captured
-database's verified generation lineage so this Doctor can finish and automatic
-rollback can restore the original snapshot. Unknown writers still block automatic
+pending deferred plugin migrations. Before each Doctor, the updater observes its
+own state database after ledger writes; Doctor then publishes the settled
+postimage of captured SQLite databases it opened. These receipts keep automatic
+rollback bound to the update's database generations. As with native Doctor close
+receipts, raw non-OpenClaw writes during the update window can be absorbed for
+those databases. Changes to untouched captured databases still block automatic
 restoration. Both the installed updater and candidate Doctor must contain this
-repair; a fixed candidate cannot attribute an older updater's missing receipts.
+repair; a fixed candidate cannot repair an older updater's missing attribution.
 
 Direct updates from extended-stable 2026.9.33 and 2026.9.34 are supported when
 the candidate contains the legacy database-generation adapter. Under maintenance

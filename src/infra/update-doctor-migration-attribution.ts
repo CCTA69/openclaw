@@ -15,6 +15,8 @@ import { truncateSqliteWal } from "./sqlite-wal-checkpoint.js";
 import { readMatchingUpdateDatabaseGeneration } from "./update-database-generations.js";
 
 export type UpdateDoctorMigrationCapture = {
+  /** Captured SQLite sources admitted by this Doctor session. */
+  openedSqlitePaths?: Set<string>;
   expected(pathname: string): string | null | undefined;
   assertCurrent(): void;
   accept(pathname: string, before: string | null, after: string | null): void;
@@ -144,19 +146,23 @@ function observeMigrationClose(
       return;
     }
     closed = true;
+    // A later migration on this handle owns its final postimage.
     if (capture.expected(pathname) !== expected) {
       return;
     }
     try {
       if (getOpenClawDatabaseMaintenanceScope() !== maintenance) {
-        throw new Error("SQLite close lost its maintenance scope.");
+        throw new Error("SQLite migration close lost its maintenance scope.");
       }
       assertCurrent();
       const after = readSqliteGeneration(pathname);
       assertCurrent();
       capture.accept(pathname, expected, after);
     } catch (error) {
-      capture.refuse(`SQLite native close could not be verified: ${formatErrorMessage(error)}`);
+      // Failed attribution must not strand a resource that SQLite already closed.
+      capture.refuse(
+        `SQLite migration native close could not be verified: ${formatErrorMessage(error)}`,
+      );
     }
   });
 }
@@ -176,36 +182,6 @@ export function hasUpdateDoctorMigrationCapture(): boolean {
   return captures.getStore()?.capture !== undefined;
 }
 
-export function getUpdateDoctorMigrationCapture() {
-  return captures.getStore()?.capture;
-}
-
-/** Ledger writes already own state admission, without borrowing schema-maintenance authority. */
-export function runUpdateSqliteLedgerWrite<T>(
-  db: DatabaseSync,
-  pathname: string,
-  operation: () => T,
-  assertWriterCurrent: () => void,
-  capture = getUpdateDoctorMigrationCapture(),
-): T {
-  if (!capture || typeof capture.expected(pathname) !== "string") {
-    return operation();
-  }
-  return runCapturedSqliteWrite(
-    db,
-    pathname,
-    operation,
-    capture,
-    () => {
-      assertWriterCurrent();
-      capture.assertCurrent();
-    },
-    // Both ledger callers own one-shot handles. Retain exclusion through their
-    // immediate close so no writer can intervene before close attribution.
-    { retainExclusive: true },
-  );
-}
-
 /** Retain the source's native exclusion across its commits and isolated postimage read. */
 export function runUpdateSqliteMigration<T>(
   db: DatabaseSync,
@@ -223,31 +199,11 @@ export function runUpdateSqliteMigration<T>(
   }
   const { capture } = context;
   const expected = capture.expected(pathname);
+  const opened = capture.openedSqlitePaths?.has(pathname);
   if (typeof expected !== "string" && !(expected === null && options?.created)) {
     return operation();
   }
-  return runCapturedSqliteWrite(
-    db,
-    pathname,
-    operation,
-    capture,
-    migrationAuthority(capture, pathname),
-    options,
-  );
-}
-
-function runCapturedSqliteWrite<T>(
-  db: DatabaseSync,
-  pathname: string,
-  operation: () => T,
-  capture: UpdateDoctorMigrationCapture,
-  assertCurrent: () => void,
-  options?: { retainExclusive?: boolean; created?: boolean },
-): T {
-  const expected = capture.expected(pathname);
-  if (typeof expected !== "string" && !(expected === null && options?.created)) {
-    return operation();
-  }
+  const assertCurrent = migrationAuthority(capture, pathname);
   assertCurrent();
   if (db.isTransaction) {
     throw new Error("Update migration exclusion must precede the source transaction.");
@@ -285,13 +241,14 @@ function runCapturedSqliteWrite<T>(
         const before =
           expected === null
             ? null
-            : mode === "exclusive"
+            : opened || mode === "exclusive"
               ? readSqliteGeneration(pathname)
               : readMatchingUpdateDatabaseGeneration(pathname, expected);
         assertCurrent();
-        if (before === undefined || (mode === "exclusive" && before !== expected)) {
+        if (before === undefined || (!opened && mode === "exclusive" && before !== expected)) {
           throw new Error(`SQLite migration source changed after update capture: ${pathname}`);
         }
+        capture.openedSqlitePaths?.add(pathname);
         if (before !== expected) {
           capture.accept(pathname, expected, before);
         }
@@ -305,26 +262,23 @@ function runCapturedSqliteWrite<T>(
         assertCurrent();
         const source: MigrationSource | undefined =
           before === null ? undefined : { path: pathname, generation: before, assertCurrent };
-        return captures.run(
-          { ...captures.getStore(), capture, source, assertMigrationCurrent: assertCurrent },
-          () => {
-            const result = operation();
-            if (isPromiseLike(result)) {
-              throw new Error("Update migration callbacks must remain synchronous.");
-            }
-            if (db.isTransaction) {
-              throw new Error("Update migration publication requires its committed native owner.");
-            }
-            assertCurrent();
-            // Checkpoint under native exclusion so this postimage survives the source handle closing.
-            truncateSqliteWal(db, pathname);
-            const after = readSqliteGeneration(pathname);
-            assertCurrent();
-            capture.accept(pathname, before, after);
-            observeMigrationClose(db, pathname, capture, after, assertCurrent);
-            return result;
-          },
-        );
+        return captures.run({ capture, source, assertMigrationCurrent: assertCurrent }, () => {
+          const result = operation();
+          if (isPromiseLike(result)) {
+            throw new Error("Update migration callbacks must remain synchronous.");
+          }
+          if (db.isTransaction) {
+            throw new Error("Update migration publication requires its committed native owner.");
+          }
+          assertCurrent();
+          // Checkpoint under native exclusion so this postimage survives the source handle closing.
+          truncateSqliteWal(db, pathname);
+          const after = readSqliteGeneration(pathname);
+          assertCurrent();
+          capture.accept(pathname, before, after);
+          observeMigrationClose(db, pathname, capture, after, assertCurrent);
+          return result;
+        });
       } catch (error) {
         capture.refuse(
           `SQLite migration publication could not be verified: ${formatErrorMessage(error)}`,
@@ -359,6 +313,7 @@ export function beginUpdateSqliteCompanion(db: DatabaseSync, pathname: string, c
     capture.refuse("Migration companion changed after update capture.");
     throw new Error("Database migration companion no longer matches its capture.");
   }
+  capture.openedSqlitePaths?.add(pathname);
   return {
     complete() {
       assertCurrent();

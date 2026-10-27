@@ -28,15 +28,12 @@ export type UpdateRunPatch = Partial<
 
 export type UpdateRunPhasePatch = UpdateRunPatch & { step?: UpdateRunStep };
 
-type UpdateRunWriteGeneration = { path: string; before: string; after: string | null };
-
 export type UpdateRunWriteInput = {
   runId: string;
   redactionFacts: UpdateRunRedactionFacts;
   requireNoRecovery?: true;
   busyTimeoutMs?: number;
   redactPaths?: readonly string[];
-  writeGeneration?: Pick<UpdateRunWriteGeneration, "path" | "before">;
 };
 
 type UpdateRunWriteResult =
@@ -44,37 +41,35 @@ type UpdateRunWriteResult =
   | { kind: "bookkeeping-skipped" }
   | { kind: "recovery-required"; recovery: UpdateRecoveryRecord };
 
-type UpdateRunWriteReply = UpdateRunWriteResult & { writeGeneration?: UpdateRunWriteGeneration };
-
 export type UpdateRunWriteOperations = {
   "updateRuns.create": {
     input: UpdateRunWriteInput & { run: CreateUpdateRunInput };
-    output: UpdateRunWriteReply;
+    output: UpdateRunWriteResult;
   };
   "updateRuns.finish": {
     input: UpdateRunWriteInput & { result: FinishUpdateRunInput };
-    output: UpdateRunWriteReply;
+    output: UpdateRunWriteResult;
   };
   "updateRuns.recordVerification": {
     input: UpdateRunWriteInput & {
       verification: UpdateRunRecord["verification"];
       onlyIfRunning?: true;
     };
-    output: UpdateRunWriteReply;
+    output: UpdateRunWriteResult;
   };
   "updateRuns.recordDiagnostics": {
     input: UpdateRunWriteInput & { diagnostics: UpdateRunDiagnostics; preserveRecovery?: true };
-    output: UpdateRunWriteReply;
+    output: UpdateRunWriteResult;
   };
   "updateRuns.recordStep": {
     input: UpdateRunWriteInput & {
       step: UpdateRunStep & { reason?: string };
     };
-    output: UpdateRunWriteReply;
+    output: UpdateRunWriteResult;
   };
   "updateRuns.recordPhase": {
     input: UpdateRunWriteInput & { phase: UpdateRunPhase; patch: UpdateRunPhasePatch };
-    output: UpdateRunWriteReply;
+    output: UpdateRunWriteResult;
   };
 };
 

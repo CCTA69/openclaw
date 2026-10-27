@@ -46,7 +46,7 @@ export type MigratedUpdateFinalizationInput = Partial<UpdateTimeoutHandoff> & {
     opts: Omit<FinishUpdateParams["opts"], "run" | "recovery" | "onResult"> & {
       run?: Omit<
         NonNullable<FinishUpdateParams["opts"]["run"]>,
-        "requesterAuthority" | "executorFence" | "sourceArtifactLock" | "deadline" | "writeCapture"
+        "requesterAuthority" | "executorFence" | "sourceArtifactLock" | "deadline"
       > & {
         requesterAuthority?: Pick<UpdateRequesterAuthority, "requester">;
       };
