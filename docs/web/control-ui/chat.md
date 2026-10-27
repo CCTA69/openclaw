@@ -96,7 +96,10 @@ each child with its status in words: **Needs your input**, **Running**,
 **Failed**, **Stopped**, or **Done**. Children that asked for your attention come
 first. The list is open while the agent waits; select the line to close or reopen
 it. It names subagents and child sessions alike, including children that finished
-during the wait. **Needs your input** is the child's own attention request, the
+during the wait. Each name, here and in the **Resumed** list, links to that
+child's session; Cmd-, Ctrl-, or middle-click opens it in a new tab. A child the
+chat's own subagent list does not include, or a pane that cannot open sessions,
+shows the name as plain text. **Needs your input** is the child's own attention request, the
 same one the sidebar shows; a child paused for a continuation without one reads
 as finished. The time stays on the same clock across handoffs and resumes.
 Until the subagent list is available, the existing working indicator remains as
@@ -153,13 +156,14 @@ row whose subagent is not in the list shows its name alone. The pane does not
 load that list when
 [Swarm is turned off](/tools/swarm) with `tools.swarm: false`.
 
-The count and the names lead to the **Subagents** panel only for subagents that
+The running count and launch-row names lead to the **Subagents** panel only for subagents that
 panel lists, including swarm workers, and only in a pane that has the panel. A
 subagent on the ACP runtime is not in that list, so its name opens its session
 instead, and a count that includes one is plain text. A pane without a side
 panel of its own, such as the transcript the **Subagents** panel shows or a
-session embedded in Home, opens the subagent's session as well. With several
-children, **Waiting on 2 sessions** opens and closes its list instead.
+session embedded in Home, opens the subagent's session as well. Names on a
+handoff's waiting line link to the child's session instead, and with several
+children **Waiting on 2 sessions** opens and closes its list.
 
 When your role or session policy blocks messages, the composer is disabled and
 shows the reason before you try to send. This includes sandbox requirements,

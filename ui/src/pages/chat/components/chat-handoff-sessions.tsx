@@ -2,9 +2,14 @@ import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
 import { ElapsedTime } from "../../../components/elapsed-time.tsx";
 import { Icon } from "../../../components/solid/icon.tsx";
 import { formatDurationCompact } from "../../../lib/format-duration.ts";
+import { handleNavigationClick } from "../../../lib/navigation-click.ts";
 import { t } from "../../../lib/reactive/i18n.ts";
 import type { HandoffDisplay } from "../chat-sessions-yield.ts";
-import type { ChatHandoffSession, ChatSubagentWait } from "../chat-subagent-wait.ts";
+import type {
+  ChatHandoffSession,
+  ChatSubagentWait,
+  HandoffSessionLinks,
+} from "../chat-subagent-wait.ts";
 import "./chat-handoff-sessions.css";
 
 function needsInputLabel(count: number) {
@@ -13,8 +18,34 @@ function needsInputLabel(count: number) {
     : t("chat.sessionsNeedInput", { count: String(count) });
 }
 
+/** A child's name: a link to its session when this viewer can open it, else text. */
+function HandoffSessionName(props: {
+  session: ChatHandoffSession;
+  links?: HandoffSessionLinks;
+  class: string;
+}) {
+  const link = createMemo(() => props.links?.(props.session.key));
+  return (
+    <Show when={link()} fallback={<span class={props.class}>{props.session.label}</span>}>
+      {(target) => (
+        <a
+          class={[props.class, "chat-handoff-sessions__link"]}
+          href={target().href}
+          onClick={(event) => handleNavigationClick(event, () => target().open())}
+        >
+          {props.session.label}
+        </a>
+      )}
+    </Show>
+  );
+}
+
 /** Each child with a status in words; the dot only repeats it. */
-function HandoffSessionList(props: { id: string; sessions: readonly ChatHandoffSession[] }) {
+function HandoffSessionList(props: {
+  id: string;
+  sessions: readonly ChatHandoffSession[];
+  links?: HandoffSessionLinks;
+}) {
   return (
     <ul id={props.id} class="chat-handoff-sessions">
       <For each={props.sessions} keyed={(session) => session.key}>
@@ -26,7 +57,11 @@ function HandoffSessionList(props: { id: string; sessions: readonly ChatHandoffS
             title={session().note}
           >
             <span class="chat-handoff-sessions__dot" aria-hidden="true" />
-            <span class="chat-handoff-sessions__name">{session().label}</span>{" "}
+            <HandoffSessionName
+              session={session()}
+              links={props.links}
+              class="chat-handoff-sessions__name"
+            />{" "}
             <span class="chat-handoff-sessions__status">
               {t(`chat.handoffSessionStatus.${session().status}`)}
             </span>
@@ -44,7 +79,7 @@ function HandoffSessionList(props: { id: string; sessions: readonly ChatHandoffS
 export function ChatSubagentWaitLine(props: {
   wait: ChatSubagentWait;
   startMs: number;
-  onOpenSubagents?: () => void;
+  links?: HandoffSessionLinks;
 }) {
   const id = createUniqueId();
   const [open, setOpen] = createSignal(true);
@@ -86,7 +121,7 @@ export function ChatSubagentWaitLine(props: {
               <Icon name="chevronRight" class="chat-subagent-wait__chevron" />
             </button>
             <Show when={open()}>
-              <HandoffSessionList id={id} sessions={props.wait.sessions} />
+              <HandoffSessionList id={id} sessions={props.wait.sessions} links={props.links} />
             </Show>
           </>
         }
@@ -99,18 +134,11 @@ export function ChatSubagentWaitLine(props: {
             <span class="chat-subagent-wait__line">
               <span>
                 {before}
-                <Show
-                  when={props.onOpenSubagents}
-                  fallback={<span class="chat-subagent-wait__name">{session().label}</span>}
-                >
-                  <button
-                    type="button"
-                    class="chat-subagent-wait__name"
-                    onClick={() => props.onOpenSubagents?.()}
-                  >
-                    {session().label}
-                  </button>
-                </Show>
+                <HandoffSessionName
+                  session={session()}
+                  links={props.links}
+                  class="chat-subagent-wait__name"
+                />
                 {after}
               </span>{" "}
               <Show when={session().status === "attention"}>
@@ -135,6 +163,7 @@ export function ChatSubagentWaitLine(props: {
 export function ChatHandoffResume(props: {
   handoff: HandoffDisplay & { resumedAt: number };
   sessions: readonly ChatHandoffSession[];
+  links?: HandoffSessionLinks;
 }) {
   const id = createUniqueId();
   const [open, setOpen] = createSignal(false);
@@ -166,7 +195,7 @@ export function ChatHandoffResume(props: {
           <Icon name="chevronRight" class="chat-subagent-wait__chevron" />
         </button>
         <Show when={open()}>
-          <HandoffSessionList id={id} sessions={props.sessions} />
+          <HandoffSessionList id={id} sessions={props.sessions} links={props.links} />
         </Show>
       </Show>
     </div>

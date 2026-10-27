@@ -4,7 +4,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  max-width: min(100%, 560px);
+  max-width: 100%;
 }
 
 .chat-subagent-wait__line,
@@ -33,15 +33,17 @@
 }
 
 .chat-subagent-wait__name {
-  padding: 0;
-  border: 0;
-  background: none;
   color: var(--text);
-  font: inherit;
   overflow-wrap: anywhere;
 }
 
-button.chat-subagent-wait__name:is(:hover, :focus-visible),
+/* Session links open in place; modified clicks open a tab like other session links. */
+.chat-handoff-sessions__link {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.chat-handoff-sessions__link:is(:hover, :focus-visible),
 .chat-subagent-wait__toggle:is(:hover, :focus-visible) > span:first-child {
   text-decoration: underline;
 }
@@ -62,7 +64,11 @@ button.chat-subagent-wait__name:is(:hover, :focus-visible),
   transform: rotate(90deg);
 }
 
+/* Both lists share one width, so status chips line up at the same right edge. */
 .chat-handoff-sessions {
+  box-sizing: border-box;
+  width: 560px;
+  max-width: calc(100% - 7px);
   margin: 4px 0 2px 7px;
   padding: 0 0 0 15px;
   border-inline-start: 1px solid var(--border);

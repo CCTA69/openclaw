@@ -477,9 +477,12 @@ suite.define(() => {
             ]);
           }
         };
-        // While it waits, the line names the session it waits on, which opens the list.
-        const waitingOn = indicator.locator("button.chat-subagent-wait__name");
+        // While it waits, the line names the session it waits on, linked to that session.
+        const waitingOn = indicator.locator("a.chat-subagent-wait__name");
         await waitingOn.waitFor();
+        expect(await waitingOn.getAttribute("href")).toMatch(
+          /\/chat\/main\/implementation-child$/u,
+        );
         expect(await indicator.count()).toBe(1);
         expect(await indicator.locator(".chat-reading-indicator").count()).toBe(0);
         expect(await indicator.locator("openclaw-working-phrase").count()).toBe(0);
@@ -524,10 +527,10 @@ suite.define(() => {
           waitingParent,
           "run-start",
         );
-        // The named session opens the collection; opening a child does not navigate the parent.
+        // The Subagents panel opens the collection; opening a child does not navigate the parent.
         const selectedTitle = activePane.locator(".chat-pane__session-title-text").first();
         const detailTitle = panel.locator(".subagents-desktop__child-name");
-        await waitingOn.click();
+        await selectChatLayoutAction(activePane, "Subagents");
         await panelRow.waitFor();
         await expect
           .poll(() => panelRow.textContent())

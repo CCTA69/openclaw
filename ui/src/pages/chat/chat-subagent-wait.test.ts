@@ -3,7 +3,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { GatewaySessionRow } from "../../api/types.ts";
 import { mountSolid } from "../../test-helpers/mount-solid.ts";
 import { flush } from "../../test-helpers/solid-settle.ts";
-import { listSubagents, projectSubagentStatus } from "./chat-subagent-wait.ts";
+import { handoffSessionLinks, listSubagents, projectSubagentStatus } from "./chat-subagent-wait.ts";
 import { UnplacedSubagentWait } from "./components/chat-message-stream-view.tsx";
 import {
   SubagentActivity,
@@ -424,7 +424,7 @@ describe("chat waiting on subagents", () => {
         vi.restoreAllMocks();
       });
       const container = document.createElement("div");
-      const onOpenSubagents = vi.fn();
+      const onOpenSessionLink = vi.fn();
       const wait = {
         startedAt: 1_500,
         runningCount: 1,
@@ -437,7 +437,7 @@ describe("chat waiting on subagents", () => {
           bubbleMode,
           waitingSubagents: wait,
           runningSubagents: wait.runningCount,
-          onOpenSubagents,
+          sessionLinks: handoffSessionLinks({ subagentSessions: [child], onOpenSessionLink }),
           outputTokens: 4_700,
           workingPhrases: ["Building"],
         },
@@ -454,11 +454,73 @@ describe("chat waiting on subagents", () => {
       );
       expect(container.querySelector(".chat-working-indicator__subagents")).toBeNull();
       expect(line?.querySelector("[aria-expanded]")).toBeNull();
-      const name = line?.querySelector<HTMLButtonElement>("button.chat-subagent-wait__name");
+      const name = line?.querySelector<HTMLAnchorElement>("a.chat-subagent-wait__name");
+      expect(name?.getAttribute("href")).toBe("/chat/main/subagent/child");
       name?.click();
-      expect(onOpenSubagents).toHaveBeenCalledOnce();
+      expect(onOpenSessionLink).toHaveBeenCalledOnce();
     },
   );
+
+  it("links child names only to sessions this pane loaded and can open", () => {
+    const onOpenSessionLink = vi.fn();
+    const dashboard = {
+      ...child,
+      key: "agent:main:dashboard:docs",
+      label: "Docs",
+      boardFace: "dashboard" as const,
+    };
+    const links = handoffSessionLinks({
+      subagentSessions: [child, dashboard],
+      basePath: "/ui",
+      onOpenSessionLink,
+    });
+    expect(links?.(child.key)?.href).toBe("/ui/chat/main/subagent/child");
+    expect(links?.(dashboard.key)?.href).toBe("/ui/dashboard/main/dashboard/docs");
+    links?.(dashboard.key)?.open();
+    expect(onOpenSessionLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        namespace: "dashboard",
+        pathname: "/ui/dashboard/main/dashboard/docs",
+      }),
+    );
+    // Not in the pane's access-scoped child rows, or no way to open sessions here: text.
+    expect(links?.("agent:main:subagent:unloaded")).toBeUndefined();
+    expect(handoffSessionLinks({ subagentSessions: [child] })).toBeUndefined();
+
+    const container = document.createElement("div");
+    const wait = {
+      startedAt: 1_500,
+      runningCount: 1,
+      sessions: [
+        { key: child.key, label: "Backend implementation", status: "running" as const },
+        { key: "agent:main:subagent:unloaded", label: "Unloaded", status: "done" as const },
+      ],
+    };
+    mountWorkingIndicator(
+      container,
+      { kind: "reading-indicator", key: "parent-wait", startedAt: 5_000 },
+      { waitingSubagents: wait, sessionLinks: links },
+    );
+    const [linked, plain] = container.querySelectorAll("li");
+    const anchor = linked?.querySelector<HTMLAnchorElement>("a.chat-handoff-sessions__name");
+    expect(anchor?.getAttribute("href")).toBe("/ui/chat/main/subagent/child");
+    expect(plain?.querySelector("a")).toBeNull();
+    expect(plain?.querySelector(".chat-handoff-sessions__name")?.textContent).toBe("Unloaded");
+    onOpenSessionLink.mockClear();
+    // Modified and middle clicks keep native link behavior for a new tab.
+    for (const init of [{ metaKey: true }, { ctrlKey: true }, { button: 1 }]) {
+      const event = new MouseEvent("click", { bubbles: true, cancelable: true, ...init });
+      anchor?.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    expect(onOpenSessionLink).not.toHaveBeenCalled();
+    const plainClick = new MouseEvent("click", { bubbles: true, cancelable: true });
+    anchor?.dispatchEvent(plainClick);
+    expect(plainClick.defaultPrevented).toBe(true);
+    expect(onOpenSessionLink).toHaveBeenCalledWith(
+      expect.objectContaining({ namespace: "chat", pathname: "/ui/chat/main/subagent/child" }),
+    );
+  });
 
   it("lists several sessions with statuses in words, attention first, open until closed", () => {
     const now = 66_500;

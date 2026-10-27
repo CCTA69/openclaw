@@ -11,7 +11,7 @@ import { registerChatSessionEnglish } from "../../../i18n/locales/en-chat-sessio
 import type { ChatItem } from "../../../lib/chat/chat-types.ts";
 import { registerEnglishCatalog, t } from "../../../lib/reactive/i18n.ts";
 import { themeBrandingProjection } from "../../../lib/reactive/theme-branding.ts";
-import type { ChatSubagentWait } from "../chat-subagent-wait.ts";
+import type { ChatSubagentWait, HandoffSessionLinks } from "../chat-subagent-wait.ts";
 import { ChatSubagentWaitLine } from "./chat-handoff-sessions.tsx";
 import { ChatRetryStatus } from "./chat-retry-status.tsx";
 import { outputTokensLabel, WorkingBrandGlyph } from "./chat-working-indicator-branding.tsx";
@@ -28,6 +28,7 @@ type ChatWorkingIndicatorOptions = {
   workingPhrases?: readonly string[];
   waitingApproval?: boolean;
   waitingSubagents?: ChatSubagentWait;
+  sessionLinks?: HandoffSessionLinks;
   runningSubagents?: number;
   onOpenSubagents?: () => void;
   startupLabel?: string;
@@ -122,7 +123,7 @@ function WorkingStatus(props: WorkingProps & { branding: ThemeBranding }) {
           <ChatSubagentWaitLine
             wait={wait()}
             startMs={wait().startedAt}
-            onOpenSubagents={props.options.onOpenSubagents}
+            links={props.options.sessionLinks}
           />
         )}
       </Show>

@@ -234,6 +234,9 @@ suite.define(() => {
         .poll(async () => squash(await wait.textContent()))
         .toBe(`Waiting on ${FIRST} · 10m`);
       expect(await wait.locator("button[aria-expanded]").count()).toBe(0);
+      expect(await wait.locator("a.chat-subagent-wait__name").getAttribute("href")).toBe(
+        "/chat/main/subagent/guest-stack-1",
+      );
       expect(await thread.textContent()).not.toContain(PRIVATE);
     });
   });
@@ -263,6 +266,13 @@ suite.define(() => {
         `${SECOND} Needs your input`,
         `${FIRST} Running`,
         `${THIRD} Done`,
+      ]);
+      expect(
+        await rows.locator("a").evaluateAll((links) => links.map((a) => a.getAttribute("href"))),
+      ).toEqual([
+        "/chat/main/subagent/guest-stack-2",
+        "/chat/main/subagent/guest-stack-1",
+        "/chat/main/subagent/guest-stack-3",
       ]);
       await toggle.click();
       expect(await toggle.getAttribute("aria-expanded")).toBe("false");
@@ -297,6 +307,14 @@ suite.define(() => {
       expect(await thread.locator(".chat-group.assistant").count()).toBe(1);
       expect(await thread.locator(".chat-notice").count()).toBe(0);
       expect(await thread.textContent()).not.toContain(PRIVATE);
+      // A listed child opens its own session in place.
+      await rule.locator("li a", { hasText: SECOND }).click();
+      await expect
+        .poll(() => new URL(page.url()).pathname)
+        .toBe("/chat/main/subagent/guest-stack-2");
+      await expect
+        .poll(() => pane.locator(".chat-pane__session-title-text").first().textContent())
+        .toBe(SECOND);
     });
   });
 });

@@ -1,10 +1,17 @@
 import type { GatewaySessionRow } from "../../api/types.ts";
+import type { SessionLinkTarget } from "../../components/markdown-session-links.ts";
 import { sessionRowAttention } from "../../lib/session-attention.ts";
 import { resolveSessionDisplayName } from "../../lib/session-display.ts";
 import { isSessionRunStateActive } from "../../lib/session-run-state.ts";
 import {
+  isSessionKeyAddressable,
+  resolveSessionPreferredFace,
+  sessionNavigationTarget,
+} from "../../lib/sessions/route-navigation.ts";
+import {
   areUiSessionKeysEquivalent,
   isDashboardSessionKey,
+  parseAgentSessionKey,
   resolveUiSessionNavigationParentKey,
 } from "../../lib/sessions/session-key.ts";
 import { pendingSessionsYield, readHandoffDisplay } from "./chat-sessions-yield.ts";
@@ -85,6 +92,49 @@ export function listHandoffSessions(
     .toSorted(
       (a, b) => HANDOFF_STATUS_ORDER.indexOf(a.status) - HANDOFF_STATUS_ORDER.indexOf(b.status),
     );
+}
+
+/** Where a handoff's child name leads: its session route, opened in this app. */
+export type HandoffSessionLink = { href: string; open: () => void };
+export type HandoffSessionLinks = (sessionKey: string) => HandoffSessionLink | undefined;
+
+/**
+ * Child names link only to sessions the pane's own access-scoped child query
+ * returned, and only in panes that can open a session; anything else stays text.
+ */
+type HandoffLinkInput = {
+  subagentSessions?: readonly GatewaySessionRow[];
+  basePath?: string;
+  mainKey?: string;
+  currentAgentId?: string;
+  onOpenSessionLink?: (target: SessionLinkTarget) => void;
+};
+
+export function handoffSessionLinks(input: HandoffLinkInput): HandoffSessionLinks | undefined {
+  const open = input.onOpenSessionLink;
+  if (!open) {
+    return undefined;
+  }
+  return (sessionKey) => {
+    const row = input.subagentSessions?.find((candidate) =>
+      areUiSessionKeysEquivalent(candidate.key, sessionKey),
+    );
+    const agentId = parseAgentSessionKey(row?.key ?? "")?.agentId ?? input.currentAgentId;
+    if (!row || !agentId || !isSessionKeyAddressable(row.key, false)) {
+      return undefined;
+    }
+    const face = resolveSessionPreferredFace(row);
+    const target = sessionNavigationTarget({
+      face,
+      sessionKey: row.key,
+      fallbackAgentId: agentId,
+      basePath: input.basePath,
+      row,
+      mainKey: input.mainKey,
+      exactKey: true,
+    });
+    return { href: target.href, open: () => open({ namespace: face, ...target.options }) };
+  };
 }
 
 /** A resumed handoff's rule lists its children, so its row follows the roster. */
@@ -205,11 +255,12 @@ export function listSubagents(input: SubagentSession): ChatSubagentActivity[] {
  * memoized rows when any of it changed.
  */
 export function projectSubagentStatus(
-  input: SubagentSession & {
-    runActive?: boolean;
-    runWorking?: boolean;
-    messages: readonly unknown[];
-  },
+  input: SubagentSession &
+    Omit<HandoffLinkInput, "subagentSessions"> & {
+      runActive?: boolean;
+      runWorking?: boolean;
+      messages: readonly unknown[];
+    },
   searchFiltering: boolean,
 ) {
   const session = input.selectedSession;
@@ -276,6 +327,7 @@ export function projectSubagentStatus(
         : undefined,
     running,
     listed,
+    links: handoffSessionLinks(input),
     // Key only the working line's facts so unrelated roster patches stay memoized.
     statusKey: JSON.stringify(
       wait

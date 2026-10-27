@@ -171,6 +171,7 @@ function PreparedMessage(props: {
         {(handoff) => (
           <ChatHandoffResume
             handoff={handoff()}
+            links={props.options.handoffSessionLinks}
             sessions={
               props.options.sessionKey && props.options.subagents
                 ? listResumedHandoffSessions(
