@@ -178,7 +178,8 @@ function poolFor(
       idleTimeoutMs: owner === "reads" ? 120_000 : undefined,
       sharedCompute: owner === "workspace",
     },
-    { retainOneIdleWorker: true },
+    // Other owners retain checkout observations whose lifetime includes idle expiry.
+    owner === "content" || owner === "workspace" ? { retainOneIdleWorker: true } : undefined,
   ));
 }
 

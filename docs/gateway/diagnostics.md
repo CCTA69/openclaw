@@ -865,9 +865,10 @@ No stored data, database schema, or update procedure changes.
 
 When a task pool recreates an idle-retired Worker within five minutes, it keeps
 one replacement warm for five minutes of inactivity. Other slots retain their
-normal idle timeout. Git operation pools instead keep their most recently used
-idle worker warm after their first task; extra readers retain their two-minute
-idle timeout, and other surplus Git workers keep their existing timeout.
+normal idle timeout. Git content and workspace-computation pools instead keep their
+most recently used idle worker warm after their first task. Git metadata, summary,
+worktree preparation, and maintenance pools keep their existing expiry because they
+retain repository observations. All surplus Git workers keep their existing timeout.
 Node Code Mode keeps one compatible completed worker warm for each host,
 runtime entry, and heap limit within its eight-worker warm-cache budget; surplus
 workers expire after 30 seconds. Neither owner starts workers before use.

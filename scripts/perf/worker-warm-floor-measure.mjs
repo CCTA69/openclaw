@@ -1,5 +1,5 @@
 /**
- * Real idle-expiry probe for Code Mode and Git owners, with synthetic data only.
+ * Real idle-expiry probe for Code Mode and Git content owners, with synthetic data only.
  * node --import ./scripts/tsx.mjs scripts/perf/worker-warm-floor-measure.mjs \
  *   --output .local/warm-floor/candidate.json --expect-floor
  * Baseline: omit --expect-floor and add --baseline-dir <source-overlay-directory>.
@@ -230,10 +230,10 @@ const catalog = prepareCodeModeNodeCatalog({
 async function execute(kind) {
   if (kind === "git") {
     const reply = await runGitWorkerOperation({
-      type: "repository.branches",
-      input: { repoRoot: repo },
+      type: "checkout.diff",
+      input: { cwd: repo, scope: "uncommitted" },
     });
-    assert.equal(reply.headBranch, "main");
+    assert.deepEqual(reply.files, []);
   } else {
     const reply = await host.run(() =>
       nodeCodeModeExecutor.execute(
