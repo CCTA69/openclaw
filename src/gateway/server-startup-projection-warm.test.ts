@@ -5,7 +5,6 @@ import {
   createDeferred,
   withinTest,
 } from "../../test/helpers/promise.js";
-import * as orphanMarking from "../agents/main-session-recovery/main-session-restart-recovery-marking.js";
 import { replaceSessionEntrySync } from "../config/sessions/session-accessor.js";
 import { MAX_SESSION_ROW_FACTS_KEYS } from "../config/sessions/session-transcript-worker.types.js";
 import * as hostAccount from "../infra/host-account-name.js";
@@ -75,7 +74,7 @@ async function createStartupState({ ui = false, anonymous = false } = {}) {
   return port;
 }
 
-it("completes startup and projection preparation before marking while retaining readiness gates", async ({
+it("completes projection preparation before session-entry access while retaining readiness gates", async ({
   signal,
 }) => {
   const port = await createStartupState({ ui: true });
@@ -86,8 +85,6 @@ it("completes startup and projection preparation before marking while retaining 
   const releaseListening = createDeferred();
   const earlyRuntimeEntered = createDeferred();
   const releaseEarlyRuntime = createDeferred();
-  const markingEntered = createDeferred();
-  const releaseMarking = createDeferred();
   const entryReceived = createDeferred<ServerResponse>();
   const secondEntryReceived = createDeferred<ServerResponse>();
   const entryClosed = createDeferred();
@@ -101,7 +98,6 @@ it("completes startup and projection preparation before marking while retaining 
     );
   const entryPath = `${buildControlUiSessionEntryUrl(`${basePath}/chat/main/topic`, basePath)}&probe=1`;
   let startup: Promise<GatewayServer> | undefined;
-  let projection: Awaited<ReturnType<typeof projections.createSessionRowProjection>> | undefined;
   let startupFinished = false;
   let earlyEntryRequest: Promise<Response> | undefined;
   let entryRequest: Promise<Response> | undefined;
@@ -116,27 +112,12 @@ it("completes startup and projection preparation before marking while retaining 
       { agentId: "main", sessionKey: "agent:main:topic" },
       { sessionId: "startup-http-topic", updatedAt: 1 },
     );
-    replaceSessionEntrySync(
-      { agentId: "main", sessionKey: "agent:main:orphan" },
-      { sessionId: "startup-orphan", updatedAt: 1, abortedLastRun: true, status: "interrupted" },
-    );
     const createProjection = projections.createSessionRowProjection;
     vi.spyOn(projections, "createSessionRowProjection").mockImplementation(async (params) => {
       projectionEntered.resolve();
       await releaseProjection.promise;
-      projection = await createProjection(params);
-      return projection;
+      return await createProjection(params);
     });
-    const markOrphans = orphanMarking.markStartupOrphanedMainSessionsForRecovery;
-    vi.spyOn(orphanMarking, "markStartupOrphanedMainSessionsForRecovery").mockImplementation(
-      async (params) => {
-        const result = await markOrphans(params);
-        expect(result.marked).toBe(1);
-        markingEntered.resolve();
-        await releaseMarking.promise;
-        return result;
-      },
-    );
     const transportModule = await import("./server-runtime-state.js");
     const createTransport = transportModule.createGatewayHttpTransport;
     vi.spyOn(transportModule, "createGatewayHttpTransport").mockImplementation(async (params) => {
@@ -212,17 +193,7 @@ it("completes startup and projection preparation before marking while retaining 
     releaseEarlyRuntime.resolve();
     const server = await startup;
     await server.startupSettled;
-    await withinTest(markingEntered.promise, signal);
-    await projection?.ensureMaterialized();
-    expect(
-      projection?.describe({ agentId: "main", key: "agent:main:orphan" })?.entry
-        .mainRestartRecovery,
-    ).toBeDefined();
-    const pendingReadiness = await read("/readyz");
-    expect(pendingReadiness.status).toBe(503);
-    await pendingReadiness.arrayBuffer();
     expect(startupFinished).toBe(true);
-    releaseMarking.resolve();
     const unauthorized = await fetch(`http://127.0.0.1:${port}${entryPath}`, {
       signal: requestSignal,
     });
@@ -233,7 +204,6 @@ it("completes startup and projection preparation before marking while retaining 
     releaseProjection.resolve();
     releaseListening.resolve();
     releaseEarlyRuntime.resolve();
-    releaseMarking.resolve();
     requests.abort();
     const server = await startup?.catch(() => undefined);
     await server?.close();

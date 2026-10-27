@@ -24,7 +24,6 @@ import {
 } from "../auto-reply/reply/session-reset-cleanup.js";
 import { getRuntimeConfig } from "../config/io.js";
 import {
-  isRestartRecoveryTombstone,
   resolveSessionWorkStartError,
   SESSION_LIFECYCLE_CHANGED_ERROR_REASON,
   SESSION_TOTAL_TOKENS_VERSION,
@@ -34,7 +33,6 @@ import {
 } from "../config/sessions.js";
 import { rebindCliSessionReseedReceiptsForReset } from "../config/sessions/cli-session-binding.js";
 import { formatSqliteSessionFileMarker } from "../config/sessions/legacy-sqlite-marker.js";
-import { resolveCanonicalMainSessionKey } from "../config/sessions/main-session-key.js";
 import { preserveResetSessionPresentation } from "../config/sessions/reset-preserved-presentation.js";
 import { resolveResetPreservedSelection } from "../config/sessions/reset-preserved-selection.js";
 import { withSessionActorStorage } from "../config/sessions/session-actor-storage-acquisition.js";
@@ -382,17 +380,6 @@ async function performPreparedGatewaySessionReset({
     // Reset drains pending preparation before replacing the session.
     const archivedSessionError = resolveSessionWorkStartError(canonicalKey, entry, {
       allowPendingWorkspace: true,
-      allowRestartTombstoneReplacement:
-        entry !== undefined &&
-        isRestartRecoveryTombstone(entry) &&
-        (entry.archivedAt === undefined ||
-          (entry.archiveReason === "restart-recovery" &&
-            canonicalKey ===
-              resolveCanonicalMainSessionKey({
-                agentId: resetTarget.target.agentId,
-                mainKey: resetTarget.cfg.session?.mainKey,
-                sessionScope: resetTarget.cfg.session?.scope,
-              }))),
     });
     if (archivedSessionError) {
       return errorShape(ErrorCodes.INVALID_REQUEST, archivedSessionError);

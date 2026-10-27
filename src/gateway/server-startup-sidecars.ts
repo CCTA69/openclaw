@@ -63,7 +63,6 @@ export async function startGatewaySidecars(params: {
   pluginMetadataSnapshot?: PluginMetadataSnapshot;
   deps: CliDeps;
   startChannels: () => Promise<void>;
-  waitForMainSessionOrphans?: () => Promise<void>;
   trackStartupWork: <T>(run: (signal: AbortSignal) => Promise<T>) => Promise<T>;
   shouldStartChannels?: () => boolean;
   refreshChatMetadata?: () => Promise<void>;
@@ -195,7 +194,6 @@ export async function startGatewaySidecars(params: {
   void params
     .trackStartupWork(() =>
       measureStartup(params.startupTrace, "sidecars.channels", async () => {
-        await params.waitForMainSessionOrphans?.();
         const shouldStartChannels = params.shouldStartChannels?.() !== false;
         const channelStart = skipChannels
           ? measureStartup(params.startupTrace, "sidecars.channel-skip", () =>
@@ -257,7 +255,6 @@ export async function startGatewaySidecars(params: {
         origin: "hooks:gateway-startup",
         shouldRun: params.shouldCreatePostReadySidecars,
         run: async (isStopped) => {
-          await params.waitForMainSessionOrphans?.();
           const { createInternalHookEvent, triggerInternalHook } = await loadInternalHooksModule();
           if (isStopped()) {
             return;

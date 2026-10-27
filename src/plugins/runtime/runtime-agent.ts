@@ -278,7 +278,6 @@ export function createRuntimeAgent(): PluginRuntime["agent"] {
             },
             runtime,
             undefined,
-            {},
           ),
     ),
   );

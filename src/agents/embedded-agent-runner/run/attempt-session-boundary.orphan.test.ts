@@ -22,7 +22,6 @@ import {
   SessionTranscriptWriterClaimReboundError,
   withOwnedSessionTranscriptWrites,
 } from "../../../config/sessions/transcript-write-context.js";
-import { MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL } from "../../../sessions/input-provenance.js";
 import { createUserTurnTranscriptRecorder } from "../../../sessions/user-turn-transcript.js";
 import type { PersistedUserTurnMessage } from "../../../sessions/user-turn-transcript.types.js";
 import { withOpenClawTestState } from "../../../test-utils/openclaw-test-state.js";
@@ -56,7 +55,6 @@ async function withPersistedOrphanBoundary(
     metadata: boolean;
     orphanProvenance?: Record<string, unknown>;
     detachLeaf?: boolean;
-    restartRecovery?: boolean;
     suppressNextUserMessagePersistence?: boolean;
     idempotencyKey?: string;
     excludeFromContext?: boolean;
@@ -136,14 +134,6 @@ async function withPersistedOrphanBoundary(
           activeSession,
           attempt: {
             sessionId: target.sessionId,
-            ...(options.restartRecovery
-              ? {
-                  inputProvenance: {
-                    kind: "internal_system" as const,
-                    sourceTool: MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL,
-                  },
-                }
-              : {}),
             prompt: "new request",
             suppressNextUserMessagePersistence: options.suppressNextUserMessagePersistence,
           },
@@ -500,45 +490,6 @@ describe("prepareEmbeddedAttemptSessionBoundary orphan recovery", () => {
     );
   });
 
-  it.each([{ parent: false, metadata: true }])(
-    "keeps the repaired orphan on the canonical branch for later turns: %j",
-    async (options) => {
-      await withPersistedOrphanBoundary(
-        { ...options, restartRecovery: true, suppressNextUserMessagePersistence: true },
-        async ({ input, manager, orphanId, target }) => {
-          const boundary = await prepareEmbeddedAttemptSessionBoundary(input);
-          expect(boundary.orphanRepair?.removeLeaf).toBe(false);
-          expect(manager.getBranch().map((entry) => entry.id)).toContain(orphanId);
-          const reopened = SessionManager.openBounded(target, { maxBytes: 4096, maxEvents: 20 });
-          expect(reopened.getBranch().map((entry) => entry.id)).toContain(orphanId);
-          expect(loadTranscriptEventsSync(target)).toEqual(
-            expect.arrayContaining([expect.objectContaining({ id: orphanId })]),
-          );
-          // This turn's assembled messages omit the orphan (folded into the prompt)
-          // while the session tree still points at it for subsequent turns.
-          expect(
-            input.activeSession.agent.state.messages.some((message) => {
-              const content = (message as { content?: unknown }).content;
-              return content === "orphan wake" || JSON.stringify(content).includes("orphan wake");
-            }),
-          ).toBe(false);
-          const leafBeforeAppend = manager.getLeafId();
-          const appended = manager.appendMessageWithTranscriptAnchor(
-            makeAssistantMessageFixture({
-              content: [{ type: "text", text: "recovery reply" }],
-              stopReason: "stop",
-              timestamp: 2,
-            }),
-          );
-          expect(manager.getEntry(appended.entryId)?.parentId).toBe(leafBeforeAppend);
-          expect(manager.getBranch().map((entry) => entry.id)).toEqual(
-            expect.arrayContaining([orphanId, appended.entryId]),
-          );
-        },
-      );
-    },
-  );
-
   it.each([
     {
       name: "recorder state is lost on restart",
@@ -731,7 +682,6 @@ describe("prepareEmbeddedAttemptSessionBoundary orphan recovery", () => {
       {
         parent: true,
         metadata: true,
-        restartRecovery: suppressNextUserMessagePersistence && !internalContinuation,
         suppressNextUserMessagePersistence,
         idempotencyKey: internalContinuation ? "orphan-projection:user" : undefined,
       },

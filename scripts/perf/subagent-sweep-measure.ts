@@ -86,8 +86,6 @@ const sweeper = createSubagentRegistrySweeper({
     lifecycleSweeps++;
   },
   completeSubagentRunWithRecovery: unexpected,
-  getGatewayRecoveryRuntime: () => undefined,
-  finalizeInterruptedSubagentRun: unexpected,
   startSubagentAnnounceCleanupFlow: unexpected,
   completeCleanupBookkeeping: unexpected,
   resumeRequesterSettleWake: unexpected,

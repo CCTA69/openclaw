@@ -4,7 +4,7 @@ import { observeHostDataSql } from "../../test/helpers/sqlite-statement-executio
 import { loadSessionEntry, replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import { replaceSessionEntrySync } from "../config/sessions/session-accessor.sqlite-entry.js";
 import { withSessionActor } from "../config/sessions/session-actor-scope.js";
-import { buildRestartRecoveryExpectedState } from "../config/sessions/session-transcript-turn-state.js";
+import { buildSessionTranscriptTurnExpectedState } from "../config/sessions/session-transcript-turn-state.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import * as workerAdmission from "../infra/sqlite-worker-operation-admission.js";
 import { sqliteWorkerOwnerProbe as probe } from "../infra/sqlite-worker-owner-probe.test-support.js";
@@ -81,7 +81,7 @@ describe("live model switch worker persistence", () => {
             sessionId: entry.sessionId,
             lifecycleRevision: entry.lifecycleRevision ?? null,
             writerRunId: entry.activeWriterRunId,
-            expectedState: buildRestartRecoveryExpectedState(entry),
+            expectedState: buildSessionTranscriptTurnExpectedState(entry),
           },
           reducers: [reducer],
         },
