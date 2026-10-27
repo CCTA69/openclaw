@@ -54,7 +54,7 @@ operator steering. Do not preserve superseded scope.
 ## Active evidence
 
 - Full Release Validation parent: `<run id / attempt / URL or none>`
-- applied release-tooling waivers: `<none | pinned P, exact version/role/job and reason; raw failure retained>`
+- qualification policy: `strict candidate-owned decision; every selected failure blocks, no P-only waiver recovery`
 - npm preflight: `<run id / URL or none>`
 - qualified npm/OCI descriptors: `<exact producer run/attempt and artifact identities>`
 - candidate acceptance: `<green untagged-SHA evidence | pending>`
@@ -124,9 +124,10 @@ reference for commands rather than redispatching the release parent.
 - selected test failure: record the lead's real-blocker-or-flake decision and
   its evidence. An untouched test or passing replay alone does not prove a
   flake or a fix. A flake gets at most two recorded reruns on the same Release
-  SHA and a fix-in-parallel issue or PR on `main`; never re-cut for it. A deliberate
-  [tooling-code waiver](../../../../docs/reference/full-release-validation/evidence.md#release-tooling-waivers)
-  requires successful FRV validation under its pinned P, with C/Q unchanged
+  SHA and a fix-in-parallel issue or PR on `main`; never re-cut, change P, or
+  start another FRV solely to waive it. The branch's
+  [strict qualification policy](../SKILL.md#shared-release-boundaries) still
+  requires every selected lane to pass
 - regular changelog-only failure before tagging: change the selected release entry and only
   its permitted record/index paths, freeze a new Release SHA, and reuse green
   Code SHA evidence after `split-changelog-release-v1` delta proof

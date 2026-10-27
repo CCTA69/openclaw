@@ -128,20 +128,42 @@ This example qualifies a final version for beta-first publication. Select
 for the prepared button. A beta prerelease uses the beta profile and soak policy.
 Keep that intended selection on later notes-only parents. This admits committed
 publication source, not registry eligibility or publication authority.
-Publish-purpose dispatches first run the `pnpm release:candidate` release-notes
-and contribution-record gates at the Code SHA and refuse to dispatch on failure.
-A record target lost to a squash merge needs a corrected record and a new Code SHA.
+This branch's direct SHA-pinned dispatcher does **not** automatically run the
+release-note and contribution-record validators; that automatic gate belongs to
+newer main tooling. For fresh regular-release qualification, use the existing
+candidate checklist **instead of** the direct dispatch above. From a clean
+checkout at Code SHA with frozen dependencies installed, run:
 
-Record and reuse C/Q and independently trusted P. The helper defaults Q=C;
-`--workflow-sha`, if explicit here, must equal C. P performs lightweight admission
-before this same helper creates the Q transport and dispatches FRV. Missing Q
+```bash
+pnpm release:candidate -- \
+  --tag <tag> --target-sha <code-sha> \
+  --workflow-sha <publisher-sha> \
+  --npm-dist-tag <beta-or-latest> \
+  --release-profile <beta-stable-or-full> \
+  --publication-route <normal-or-prepared>
+```
+
+The checklist runs `validateCandidateReleaseNotes` and
+`validateCandidateChangelogProvenance` before `dispatchFullReleaseUsingHelper`;
+a failure prevents dispatch. Supply the reviewed SDK acknowledgement when
+required, and retain the protected tooling-tag authority requirements in
+[qualify publication bytes](#qualify-publication-bytes). Do not run both dispatch
+routes. For an existing qualification, use the retained-run consumption path
+below rather than launching another run. A record target lost to a squash merge
+needs a corrected record and a new Code SHA.
+
+Record and reuse C/Q and independently trusted P. For the direct SHA-pinned
+dispatcher, `--workflow-sha`, if explicit, must equal C; its default is Q=C.
+The candidate checklist instead uses `--workflow-sha` for P, as shown above.
+P performs lightweight admission before the dispatcher creates the Q transport
+and dispatches FRV. Missing Q
 contracts need deliberate backports; never borrow future-main requirements.
 Beta-publish uses
 `release_profile=beta`, `run_release_soak=false` (`npm-beta-v1` for a qualifying
 canonical beta target). Stable-publish requires `release_profile=stable` or
 `full`, soak, and blocking performance. Beta-profile evidence cannot qualify
-stable. FRV must conclude success under its pinned
-[release-tooling policy](../../../../docs/reference/full-release-validation/evidence.md#release-tooling-waivers).
+stable. FRV must conclude success with every selected lane passing under this
+branch's strict candidate-owned decision policy; changing P cannot waive failures.
 See [shared release boundaries](../SKILL.md#shared-release-boundaries),
 [validation](validation.md), and
 [publication recovery](publication-recovery.md). Diagnose
@@ -444,8 +466,8 @@ failure without republishing npm.
 Run [postpublish confidence](validation.md#postpublish-confidence) against the
 exact published package. For a beta-to-latest promotion, retain available
 deferred-lane results, including published-package Telegram, while enforcing
-the shared required publication proofs. The exact FRV must succeed, with any
-tooling-policy waivers already recorded there. Run safe
+the shared required publication proofs. The exact FRV and every selected lane
+must succeed; this branch does not support tooling-policy waivers. Run safe
 independent rosters concurrently while controlling local Docker/VM load.
 Classify failures before admitting a fix to the next beta; do not scan moving
 main or automatically rerun all groups. An operator's beta-attempt cap counts
