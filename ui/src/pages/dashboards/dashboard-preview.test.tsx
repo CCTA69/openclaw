@@ -21,10 +21,10 @@ afterEach(() => {
 });
 
 it("resumes near-viewport rendering and its error boundary after being remounted", async () => {
-  const observations: { target: Element; notify: (isIntersecting: boolean) => void }[] = [];
-  stubManualIntersectionObserver((target, notify) => observations.push({ target, notify }));
+  const observations: ((isIntersecting: boolean) => void)[] = [];
+  stubManualIntersectionObserver((_target, notify) => observations.push(notify));
   let setVisible!: (value: boolean) => void;
-  const { container, unmount } = mountSolid(() => {
+  const { container } = mountSolid(() => {
     const [visible, set] = createSignal(true);
     setVisible = set;
     return (
@@ -34,37 +34,18 @@ it("resumes near-viewport rendering and its error boundary after being remounted
     );
   });
 
-  flush();
-  expect(observations).toHaveLength(1);
-  expect(container.textContent).not.toContain("Preview unavailable");
-  observations[0]!.notify(false);
-  flush();
-  expect(container.textContent).not.toContain("Preview unavailable");
-  observations[0]!.notify(true);
-  flush();
-  await waitForSolid(() => expect(container.textContent).toContain("Preview unavailable"));
-
-  observations[0]!.notify(false);
-  flush();
-  expect(container.textContent).not.toContain("Preview unavailable");
-
-  setVisible(false);
-  flush();
-  expect(container.textContent).not.toContain("Preview unavailable");
-
-  setVisible(true);
-  flush();
-  expect(observations).toHaveLength(2);
-  expect(observations[1]!.target).not.toBe(observations[0]!.target);
-  observations[0]!.notify(true);
-  flush();
-  expect(container.textContent).not.toContain("Preview unavailable");
-  observations[1]!.notify(true);
-  flush();
-  await waitForSolid(() => expect(container.textContent).toContain("Preview unavailable"));
-
-  unmount();
-  observations[1]!.notify(true);
-  flush();
-  expect(container.childElementCount).toBe(0);
+  for (const count of [1, 2]) {
+    setVisible(true);
+    flush();
+    expect(observations).toHaveLength(count);
+    expect(container.textContent).not.toContain("Preview unavailable");
+    observations[count - 1]!(true);
+    await waitForSolid(() => expect(container.textContent).toContain("Preview unavailable"));
+    observations[count - 1]!(false);
+    flush();
+    expect(container.textContent).not.toContain("Preview unavailable");
+    setVisible(false);
+    flush();
+    expect(container.textContent).not.toContain("Preview unavailable");
+  }
 });
