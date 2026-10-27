@@ -677,12 +677,20 @@ the ABI requirements of a compiler or native addon. See
 and compiler limits.
 
 For the **Linux App** workflow, select `desktop_runtime: aot`, supply `aot_run_id`
-from this repository and `aot_artifact_name`. The downloaded artifact must have
-the standalone files at its root. Ordinary PR checks and release builds remain
-JIT. Flip the build input back to `jit` to produce a JIT app; after replacing an
-existing app, activate its runtime through **Use bundled runtime…**. Both
+from a successful push or manually dispatched workflow in this repository and
+`aot_artifact_name`. The artifact must target Linux x64 and have the standalone
+files at its root. Runtime selection applies only to the packaging step;
+ordinary native test fixtures and release builds remain JIT. Flip the build
+input back to `jit` to produce a JIT app; after replacing an existing app,
+activate its runtime through **Use bundled runtime…**. Both
 JIT-to-AOT and AOT-to-AOT updates keep old runtime directories while a service or
 rollback selection references them.
+
+The native macOS app does not read `OPENCLAW_DESKTOP_RUNTIME`. Its future
+integration can consume the same per-architecture standalone contract, choosing
+AOT for `darwin-arm64` and JIT for `darwin-x64` at the macOS 26.2 app floor. Its
+runtime owner must perform that separate cutover; no native app default changes
+with this Tauri feature.
 
 ## Icons
 

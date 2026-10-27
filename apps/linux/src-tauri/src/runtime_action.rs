@@ -704,7 +704,10 @@ fn publish_launcher(
         entry: runtime
             .entry
             .clone()
-            .unwrap_or_else(|| original.entry.clone()),
+            .unwrap_or_else(|| match runtime.flavor {
+                RuntimeFlavor::Aot => runtime.executable.clone(),
+                RuntimeFlavor::Jit => original.entry.clone(),
+            }),
         retention: original
             .selection
             .as_ref()

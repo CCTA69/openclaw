@@ -82,13 +82,34 @@ disconnection, and manual recovery.
 
 ### Desktop compatibility
 
-The Linux companion shares one Bun fork pin with the native macOS app and CI.
-Runtime admission, SQLite safety checks, and the fork's disabled implicit package
-auto-install remain enabled. macOS Tauri test builds keep their existing runtime
-behavior; the native macOS app owns its separate bundled runtime. Windows Tauri
+The Tauri companion defaults to JIT: the pinned OpenClaw Bun fork plus its
+matching OpenClaw package. Runtime admission, SQLite safety checks, and the
+fork's disabled implicit package auto-install remain enabled. Windows Tauri
 releases use the signed Windows fork from the shared pin for local setup; an
 unsigned dry-run is not shippable. See
 [Bun compatibility](/install/bun-compatibility).
+
+To build an experimental AOT companion, set `OPENCLAW_DESKTOP_RUNTIME=aot` and
+`OPENCLAW_DESKTOP_AOT_ARTIFACT` to a prebuilt
+[standalone artifact](/install/standalone#desktop-app-artifacts). Keep its
+executable, `manifest.json`, and runtime sidecar together. The Tauri build stages
+that artifact without building the experimental compiler. The embedded manifest
+selects the launch command, CLI, and Gateway runtime; the tray shows its flavor.
+Set `OPENCLAW_DESKTOP_RUNTIME=jit` to switch the next build back. Release defaults
+remain JIT.
+
+The manual **Linux App** workflow accepts the same choice through
+`desktop_runtime`. For AOT, also supply `aot_run_id` and `aot_artifact_name` from a
+successful push or manually dispatched workflow in the same repository. The
+artifact must target Linux x64 and contain the standalone files at its root.
+Ordinary PR tests keep their JIT fixtures. AOT runtime qualification and native
+plugin checks must cover the exact artifact you supply.
+
+AOT supports glibc Linux x64/arm64 and Apple silicon macOS Tauri builds. It uses
+the experimental OpenClaw Bun/WebKit forks. macOS Tauri builds require macOS 26.2
+or later; AOT must be signed with hardened runtime and without `allow-jit`.
+The native macOS app has a separate runtime owner and continues to default to
+JIT.
 
 Published AMD64 AppImages are built on Ubuntu 22.04 and require glibc 2.35 or
 newer plus a `libstdc++` that provides `GLIBCXX_3.4.30`. Ubuntu 22.04 and
@@ -98,6 +119,11 @@ this requirement.
 
 `.deb` installs stay owned by the system package manager; installing the download
 does not add an APT repository. AppImages use the signed in-app updater.
+After replacing an existing app with a different runtime build, choose
+**Use bundled runtime…** in the tray to activate it for the local Gateway.
+Updating the app alone does not replace an existing Gateway service. A successful
+activation retains the previous runtime for recovery and keeps any runtime
+still used by a running process.
 
 Global shortcuts are available on X11. On Wayland, use the tray's **Quick Chat**
 entry when your desktop provides a tray host; global shortcuts are unavailable.
