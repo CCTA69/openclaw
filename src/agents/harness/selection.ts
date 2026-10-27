@@ -1,3 +1,5 @@
+import { sha256HexPrefixCore } from "@openclaw/normalization-core/node-crypto";
+import { copyChannelSourceTurnContext } from "../../auto-reply/reply/source-turn-id.js";
 import { readRuntimeConfig } from "../../config/runtime-snapshot.js";
 import { hasInternalHookListeners } from "../../hooks/internal-hooks.js";
 import { prepareActiveNodeContext } from "../../infra/active-node-context.js";
@@ -170,6 +172,8 @@ export async function runAgentHarnessSettledTurnFinalization(
       {
         ...internalParams,
         operation: "settled-tool-finalization",
+        // This tool-free projection must not replace the conversation's cache or history baseline.
+        promptCacheKey: `finalization:${sha256HexPrefixCore(params.runId, 32)}`,
         abortSignal: modelExecution
           ? params.abortSignal
             ? AbortSignal.any([params.abortSignal, modelExecution.signal])
@@ -195,12 +199,12 @@ export async function runAgentHarnessSettledTurnFinalization(
 }
 
 export async function runAgentHarnessAttempt(
-  params: EmbeddedRunAttemptParams,
+  params: EmbeddedRunAttemptInternalParams,
   nativeSessionRuntime?: import("../embedded-agent-runner/run/model-setup.js").PreparedNativeSessionRuntime,
 ): Promise<EmbeddedRunAttemptResult> {
-  let internalParams = params as EmbeddedRunAttemptParams & {
+  let internalParams: EmbeddedRunAttemptInternalParams & {
     systemAgentTool?: SystemAgentToolOptions;
-  };
+  } = params;
   if (nativeSessionRuntime) {
     await nativeSessionRuntime.assertCurrent();
   } else {
@@ -224,7 +228,24 @@ export async function runAgentHarnessAttempt(
           }),
           harness: nativeSessionRuntime.harness,
         }
-      : selectPreparedAgentHarness(params);
+      : selectAgentHarnessDecision({
+          provider: params.provider,
+          modelId: params.modelId,
+          modelProvider: {
+            api: params.model.api,
+            baseUrl: params.model.baseUrl,
+            ...resolveAgentHarnessPreparedRouteSupport(params.runtimePlan?.auth),
+            preparedAuth: resolveAgentHarnessPreparedAuthSupport({
+              plan: params.runtimePlan?.auth,
+            }),
+          },
+          config: params.config,
+          agentId: params.agentId,
+          sessionKey: params.sessionKey,
+          agentHarnessId: params.agentHarnessId,
+          agentHarnessRuntimeOverride: params.agentHarnessRuntimeOverride,
+          preparedModelProvider: params.runtimePlan?.auth !== undefined,
+        });
   const harness = selection.harness;
   // Capture this registration before any awaited preparation; IDs and dispatch methods
   // do not establish that an external sink understands separate question permission.
@@ -409,9 +430,19 @@ export async function runAgentHarnessAttempt(
           );
           // Load the calculator only after admission and final host policy preparation.
           return import("./tool-authority.runtime.js").then(
-            ({ withPreparedEmbeddedRunToolAuthority }) =>
-              withPreparedEmbeddedRunToolAuthority(
-                { ...internalParams, queueInputAdapter },
+            ({ withPreparedEmbeddedRunToolAuthority }) => {
+              const toolAuthorityParams = {
+                admittedRunContext: internalParams.admittedRunContext,
+                replyOperation: internalParams.replyOperation,
+                sessionPersistence: internalParams.sessionPersistence,
+                trigger: internalParams.trigger,
+                bindWatchdogAttempt: internalParams.bindWatchdogAttempt,
+                joinObservation: internalParams.joinObservation,
+                queueInputAdapter,
+              };
+              copyChannelSourceTurnContext(toolAuthorityParams, internalParams);
+              return withPreparedEmbeddedRunToolAuthority(
+                toolAuthorityParams,
                 effectiveAttemptParams,
                 selection.builtIn
                   ? undefined
@@ -434,7 +465,8 @@ export async function runAgentHarnessAttempt(
                         : input;
                     },
                 (prepared) => pluginAttempt.runWithHostScope(() => runPreparedAttempt(prepared)),
-              ),
+              );
+            },
           );
         }),
       );
@@ -491,39 +523,21 @@ function assertHarnessModelPolicySupport(harness: AgentHarness, params: Embedded
   return authority;
 }
 
-function selectPreparedAgentHarness(
-  params: EmbeddedRunAttemptParams,
-): AgentHarnessSelectionDecision {
-  return selectAgentHarnessDecision({
-    provider: params.provider,
-    modelId: params.modelId,
-    modelProvider: {
-      api: params.model.api,
-      baseUrl: params.model.baseUrl,
-      ...resolveAgentHarnessPreparedRouteSupport(params.runtimePlan?.auth),
-      preparedAuth: resolveAgentHarnessPreparedAuthSupport({ plan: params.runtimePlan?.auth }),
-    },
-    config: params.config,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-    agentHarnessId: params.agentHarnessId,
-    agentHarnessRuntimeOverride: params.agentHarnessRuntimeOverride,
-    preparedModelProvider: params.runtimePlan?.auth !== undefined,
-  });
-}
-
 async function runAgentHarnessOperation<T>(
   harness: AgentHarness,
   params: EmbeddedRunAttemptParams,
   execute: () => Promise<T>,
 ): Promise<T> {
-  await prepareActiveNodeContext(readRunOperatorAuthority(params)?.profileId);
+  const builtIn = isBuiltInOpenClawAgentHarness(harness);
+  // Embedded prompt assembly refreshes this at consumption; plugin host capabilities need it here.
+  if (!builtIn) {
+    await prepareActiveNodeContext(readRunOperatorAuthority(params)?.profileId);
+  }
   resolveAdmittedRunActiveAssertion(params.admittedRunContext, params.abortSignal)?.();
   const activeTrace = getActiveDiagnosticTraceContext();
   const harnessTrace = freezeDiagnosticTraceContext(
     activeTrace ? createChildDiagnosticTraceContext(activeTrace) : createDiagnosticTraceContext(),
   );
-  const builtIn = isBuiltInOpenClawAgentHarness(harness);
   try {
     return await runWithDiagnosticTraceContext(harnessTrace, execute);
   } catch (error) {
@@ -608,12 +622,11 @@ function withoutInternalHarnessAuthority(
 } {
   if (builtIn) {
     return {
-      // The built-in harness is the internal owner of this authority. Only
-      // plugin handoffs receive the projected public attempt shape below.
-      params: {
-        ...params,
+      // The caller hands us its fresh rest object; extend it without copying again.
+      // Only plugin handoffs need the private-state projection below.
+      params: Object.assign(params, {
         operationalRunInstance: params.admittedRunContext.operationalRunInstance,
-      } as import("./types.js").AgentHarnessAttemptParamsV2,
+      }) as import("./types.js").AgentHarnessAttemptParamsV2,
       closeHostCapabilities: () => {},
       setInputAttachmentReadAllowed: () => {},
       runWithHostScope: (run) => run(),
