@@ -300,6 +300,38 @@ async function galleryPresentationCounts(page: Page) {
   });
 }
 
+async function initialGalleryPreviews(page: Page, gateway: MockGatewayControls) {
+  await gateway.waitForRequest("board.get", {
+    match: { sessionKey: "agent:main:data-gallery-0" },
+  });
+  await settle(page);
+  const previewWindow = await page.locator(galleryHost).evaluate((host) => {
+    const cards = Array.from(host.querySelectorAll("[data-dashboard-session]"));
+    // Allow the preview's 200px margin and the grid's two overscan tracks.
+    const margin = 200 + 2 * Math.max(...cards.map((card) => card.getBoundingClientRect().height));
+    return cards
+      .filter((card) => {
+        const bounds = card.getBoundingClientRect();
+        return bounds.bottom >= -margin && bounds.top <= innerHeight + margin;
+      })
+      .map((card) => card.getAttribute("data-dashboard-session"));
+  });
+  const requestedBoardIds = (await gateway.getRequests("board.get")).flatMap(({ params }) =>
+    isRecord(params) &&
+    typeof params.sessionKey === "string" &&
+    params.sessionKey.startsWith("agent:main:data-gallery-")
+      ? [params.sessionKey]
+      : [],
+  );
+  if (
+    requestedBoardIds.length > previewWindow.length ||
+    requestedBoardIds.some((key) => !previewWindow.includes(key))
+  ) {
+    throw new Error("Initial gallery previews fetched outside the viewport and overscan window");
+  }
+  return { requestedBoardIds, initialPreviewWindow: previewWindow.length };
+}
+
 async function prepareWorkspace(page: Page) {
   await openChatSidePanelType(page, "Files");
   await page
@@ -497,10 +529,15 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
     prepare: async (page) => {
       await openSidebarPages(page);
     },
-    run: async (page) => {
+    run: async (page, gateway) => {
       await page.getByRole("link", { name: "Dashboards", exact: true }).click();
       await prepareGallery(page);
-      return galleryPresentationCounts(page);
+      const initialPreviews = await initialGalleryPreviews(page, gateway);
+      return {
+        ...(await galleryPresentationCounts(page)),
+        initialPreviewReads: initialPreviews.requestedBoardIds.length,
+        initialPreviewWindow: initialPreviews.initialPreviewWindow,
+      };
     },
   },
   {
@@ -611,14 +648,23 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
     fixtureOverrides: createGalleryFixture,
     prepare: prepareGallery,
     run: async (page, gateway) => {
-      await page
-        .locator('[data-dashboard-session="agent:main:data-gallery-999"]')
-        .scrollIntoViewIfNeeded();
+      const finalId = `data-gallery-${galleryCount - 1}`;
+      const finalKey = `agent:main:${finalId}`;
+      const initialPreviews = await initialGalleryPreviews(page, gateway);
+      if (initialPreviews.requestedBoardIds.includes(finalKey)) {
+        throw new Error("The offscreen final dashboard fetched its preview before scrolling");
+      }
+      const finalCard = page.locator(`[data-dashboard-session="${finalKey}"]`);
+      const href = await finalCard.locator("a.dashboard-card__main").getAttribute("href");
+      if (href !== `/dashboard/main/${finalId}`) {
+        throw new Error(`Final dashboard has an incorrect native URL: ${href}`);
+      }
+      await finalCard.scrollIntoViewIfNeeded();
       await gateway.waitForRequest("board.get", {
-        match: { sessionKey: "agent:main:data-gallery-999" },
+        after: 0,
+        match: { sessionKey: finalKey },
       });
       await settle(page);
-      const finalCard = page.locator('[data-dashboard-session="agent:main:data-gallery-999"]');
       await finalCard.scrollIntoViewIfNeeded();
       await finalCard
         .locator(".dashboard-card__author")
@@ -641,7 +687,12 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
       if (counts.windowed && counts.cards > 100) {
         throw new Error("Scrolling mounted an unbounded gallery window");
       }
-      return { ...counts, previewReads: (await gateway.getRequests("board.get")).length };
+      return {
+        ...counts,
+        initialPreviewReads: initialPreviews.requestedBoardIds.length,
+        initialPreviewWindow: initialPreviews.initialPreviewWindow,
+        previewReads: (await gateway.getRequests("board.get")).length,
+      };
     },
   },
   {
@@ -650,7 +701,7 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
     diagnostic: "Multi-viewport correctness and capture; not a timing comparison.",
     route: "/dashboards",
     expected:
-      "All 1,000 results remain searchable, mounted links stay native, the final card reveals its content on focus, and 3/2/1-column layouts fit the viewport.",
+      "All 1,000 results remain represented, mounted links stay native, the final card retains focus after scrolling, and 3/2/1-column layouts fit the viewport.",
     fixtureOverrides: createGalleryFixture,
     prepare: prepareGallery,
     run: async (page) => {
