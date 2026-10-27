@@ -1793,7 +1793,9 @@ try {
   }
   for (let run = 0; run < runs; run++) {
     const bundleIndex = run % bundleSlots.length;
-    const layoutCell = layoutCells[Math.floor(run / bundleSlots.length) % layoutCells.length];
+    // Compare every bundle under the same route and roster conditions.
+    const bundleCycle = Math.floor(run / bundleSlots.length);
+    const layoutCell = layoutCells[bundleCycle % layoutCells.length];
     const runRoute = layoutCell?.route ?? bootRoute;
     const cold = layoutCell?.cold ?? firstLoad;
     const runUrl =
@@ -3169,7 +3171,7 @@ try {
           filmstrip: values["new-session-filmstrip"],
           held:
             values["new-session-list-mode"] === "held" ||
-            (values["new-session-list-mode"] === "alternate" && run % 2 === 1),
+            (values["new-session-list-mode"] === "alternate" && bundleCycle % 2 === 1),
         })
       : undefined;
     await cdp.detach();
