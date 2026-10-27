@@ -10,6 +10,7 @@ import { createOperationalRunInstanceRef } from "../../agents/admitted-run-conte
 import { runWithAgentCommandRecoveryOwner } from "../../agents/agent-command-recovery-owner.js";
 import * as runs from "../../agents/embedded-agent-runner/runs.js";
 import { createEmbeddedRunHandle } from "../../agents/embedded-agent-runner/runs.test-support.js";
+import { createEnteredGate } from "../../agents/entered-gate.test-support.js";
 import {
   captureRequesterOrigin,
   hasSameRequesterOrigin,
@@ -108,6 +109,13 @@ function expectChat(fixture: Fixture, runId: string, state: string, content: unk
   );
 }
 
+async function recordInput({ followupRun, opts }: Parameters<typeof executeAgentTurn>[0]) {
+  const runId = expectDefined(opts?.runId, "followup run ID");
+  opts?.onAgentRunStart?.(runId);
+  await expectDefined(followupRun.userTurnTranscriptRecorder, "input recorder").persistApproved();
+  return runId;
+}
+
 it("quietly queues another requester and drains once with their current policy", async ({
   signal,
 }) => {
@@ -203,6 +211,9 @@ it("quietly queues another requester and drains once with their current policy",
 });
 
 it("preserves opt-in strict refusal and admits an explicit fresh followup", async ({ signal }) => {
+  const wait = <T>(pending: PromiseLike<T>) => withinTest(pending, signal);
+  const waitForGate = (...args: Parameters<typeof awaitGateBeforeSettlement>) =>
+    wait(awaitGateBeforeSettlement(...args));
   const refusal =
     "Someone else’s turn is still running, and collaborative steering is disabled. Your message wasn’t queued. Resend it as /followup <message> to run it afterward.\n\nAdmins can enable collaborative steering with messages.queue.allowCollaborativeSteering: true.";
   const fixture = await createFixture({ preserveContent: true });
@@ -242,22 +253,19 @@ it("preserves opt-in strict refusal and admits an explicit fresh followup", asyn
   const consumed: Parameters<typeof executeAgentTurn>[0][] = [];
   runtime.execute.mockReset();
   runtime.execute.mockRejectedValue(new Error("Refused input must not execute"));
-  dispatchInboundMessageMock.mockImplementation(async (raw: unknown) => {
+  dispatchInboundMessageMock.mockImplementation((raw: unknown) => {
     const params = raw as DispatchParams;
     const isExplicitFollowup = params.replyOptions?.runId === followupId;
     if (isExplicitFollowup) {
       observeAdmission(params, queued, settled);
     }
-    try {
-      return await dispatchActual({ ...params, cfg: config });
-    } finally {
+    return dispatchActual({ ...params, cfg: config }).finally(() => {
       (isExplicitFollowup ? followupDispatched : dispatched).resolve();
-    }
+    });
   });
   try {
-    const ack = await fixture.send();
-    expect(ack.mock.calls[0]?.[1]).toMatchObject({ status: "started" });
-    await withinTest(dispatched.promise, signal);
+    expect((await fixture.send()).mock.calls[0]?.[1]).toMatchObject({ status: "started" });
+    await wait(dispatched.promise);
     await rpcSourceTesting.get(fixture.params.idempotencyKey)?.input.settlement.promise;
     expect(injected).not.toHaveBeenCalled();
     expect(operation.result).toBeNull();
@@ -271,15 +279,12 @@ it("preserves opt-in strict refusal and admits an explicit fresh followup", asyn
       total: 1,
       items: [{ runId: fixture.params.idempotencyKey, state: "cancelled" }],
     });
-    const duplicate = await fixture.send();
-    expect(duplicate.mock.calls[0]?.[0]).toBe(false);
-    expect(duplicate.mock.calls[0]?.[1]).toMatchObject({
-      status: "error",
-      summary: refusal,
+    expect((await fixture.send()).mock.calls[0]).toMatchObject({
+      0: false,
+      1: { status: "error", summary: refusal },
     });
     fixture.context.dedupe.clear();
-    const durableRetry = await fixture.send();
-    expect(durableRetry.mock.calls[0]).toMatchObject({
+    expect((await fixture.send()).mock.calls[0]).toMatchObject({
       0: true,
       1: { status: "ok", runId: fixture.params.idempotencyKey },
       3: { cached: true },
@@ -288,16 +293,10 @@ it("preserves opt-in strict refusal and admits an explicit fresh followup", asyn
     expect((await listSessionPendingInputs(fixture.scope)).items).toEqual(pending.items);
 
     runtime.execute.mockImplementation(async (params) => {
-      const { followupRun, opts } = params;
-      const runId = expectDefined(opts?.runId, "followup run ID");
-      opts?.onAgentRunStart?.(runId);
-      await expectDefined(
-        followupRun.userTurnTranscriptRecorder,
-        "input recorder",
-      ).persistApproved();
+      const runId = await recordInput(params);
       consumed.push(params);
       started.resolve();
-      await withinTest(release.promise, signal);
+      await wait(release.promise);
       return successfulChatTurn(runId, "Bob's explicit followup answered.");
     });
     const followupOutcome = createDeferred();
@@ -319,22 +318,18 @@ it("preserves opt-in strict refusal and admits an explicit fresh followup", asyn
     setRuntimeConfigSnapshot(config, config);
     fixture.params.idempotencyKey = followupId;
     fixture.params.message = "/followup Answer Bob's separate request.";
-    const explicitAck = await fixture.send();
-    expect(explicitAck.mock.calls[0]?.[1]).toMatchObject({ status: "started" });
-    await withinTest(
-      awaitGateBeforeSettlement(
-        queued.promise,
-        followupDispatched.promise,
-        "Explicit followup did not queue",
-      ),
-      signal,
+    expect((await fixture.send()).mock.calls[0]?.[1]).toMatchObject({ status: "started" });
+    await waitForGate(
+      queued.promise,
+      followupDispatched.promise,
+      "Explicit followup did not queue",
     );
-    await withinTest(followupDispatched.promise, signal);
+    await wait(followupDispatched.promise);
     expect(isRpcSourceQueued(rpcSourceTesting.get(followupId))).toBe(true);
     expect(operation.result).toBeNull();
     expect(injected).not.toHaveBeenCalled();
     expect(consumed).toEqual([]);
-    await withinTest(followupOutcome.promise, signal);
+    await wait(followupOutcome.promise);
     expectChat(fixture, followupId, "delta", [
       {
         type: "text",
@@ -345,13 +340,10 @@ it("preserves opt-in strict refusal and admits an explicit fresh followup", asyn
     config.tools = { ...config.tools, deny: ["exec"] };
     setRuntimeConfigSnapshot(config, config);
     operation.complete();
-    await withinTest(
-      awaitGateBeforeSettlement(
-        started.promise,
-        settled.promise,
-        "Explicit followup settled without execution",
-      ),
-      signal,
+    await waitForGate(
+      started.promise,
+      settled.promise,
+      "Explicit followup settled without execution",
     );
     expect(consumed).toHaveLength(1);
     const run = consumed[0]!.followupRun;
@@ -364,15 +356,14 @@ it("preserves opt-in strict refusal and admits an explicit fresh followup", asyn
       resolveRequesterPrincipalKey({ operatorProfileId: bob.id }),
     );
     release.resolve();
-    await withinTest(settled.promise, signal);
+    await wait(settled.promise);
     await fixture.finishDispatch();
     expect((await listSessionPendingInputs(fixture.scope)).items).toEqual(pending.items);
     fixture.params.idempotencyKey = "strict-steer-bob-input";
     fixture.params.message = "Raw follow-up awaiting approval.";
     fixture.context.dedupe.clear();
     rotateAgentEventLifecycleGeneration();
-    const afterRestart = await fixture.send();
-    expect(afterRestart.mock.calls[0]).toMatchObject({
+    expect((await fixture.send()).mock.calls[0]).toMatchObject({
       0: true,
       1: { status: "ok", runId: fixture.params.idempotencyKey },
       3: { cached: true },
@@ -389,7 +380,6 @@ it("preserves opt-in strict refusal and admits an explicit fresh followup", asyn
 it.for([false, true])(
   "preserves chat.send behind a direct announce (tool_authority_mismatch, cancel=%s)",
   async (cancel, { signal }) => {
-    const reason = "tool_authority_mismatch";
     const wait = <T>(pending: PromiseLike<T>) => withinTest(pending, signal);
     const waitForGate = (...args: Parameters<typeof awaitGateBeforeSettlement>) =>
       wait(awaitGateBeforeSettlement(...args));
@@ -406,7 +396,7 @@ it.for([false, true])(
       (await listSessionPendingInputs(scope)).items.map((input) => input.state);
     fixture.activeRun?.complete();
     sendParams.queueMode = "steer";
-    sendParams.idempotencyKey = `direct-followup-${reason}-${cancel}`;
+    sendParams.idempotencyKey = `direct-followup-tool_authority_mismatch-${cancel}`;
     runtime.execute.mockReset();
 
     const config = steeringConfig(fixture);
@@ -442,28 +432,21 @@ it.for([false, true])(
     let broadcastsAtStop = 0;
     const consumed: string[] = [];
     let recorder: UserTurnTranscriptRecorder | undefined;
-    const directReady = createDeferred();
-    const releaseDirect = createDeferred();
-    const cleanupReady = createDeferred();
-    const releaseCleanup = createDeferred();
+    const directGate = createEnteredGate();
+    const cleanupGate = createEnteredGate();
     const lifecycleGeneration = getAgentEventLifecycleGeneration();
     const dispatchActual = await loadRealChatDispatch();
-    dispatchInboundMessageMock.mockImplementation(async (raw: unknown) => {
+    dispatchInboundMessageMock.mockImplementation((raw: unknown) => {
       const params = raw as DispatchParams;
       recorder = params.replyOptions?.userTurnTranscriptRecorder;
       observeAdmission(params, queued, settled);
-      try {
-        return await dispatchActual({ ...params, cfg: config });
-      } finally {
+      return dispatchActual({ ...params, cfg: config }).finally(() => {
         dispatched.resolve();
-      }
+      });
     });
-    runtime.execute.mockImplementation(async ({ followupRun, opts }) => {
-      const runId = expectDefined(opts?.runId, "followup run ID");
-      opts?.onAgentRunStart?.(runId);
-      const input = expectDefined(followupRun.userTurnTranscriptRecorder, "input recorder");
-      await input.persistApproved();
-      consumed.push(followupRun.prompt);
+    runtime.execute.mockImplementation(async (params) => {
+      const runId = await recordInput(params);
+      consumed.push(params.followupRun.prompt);
       return successfulChatTurn(runId, "Followup answered.");
     });
     let command: Promise<void> | undefined;
@@ -507,11 +490,9 @@ it.for([false, true])(
                   expectDefined(operation, "direct turn owner"),
                 ),
             );
-            directReady.resolve();
-            await withinTest(releaseDirect.promise, signal);
+            await wait(directGate.wait());
             runs.detachActiveEmbeddedRun(scope.sessionId, handle);
-            cleanupReady.resolve();
-            await withinTest(releaseCleanup.promise, signal);
+            await wait(cleanupGate.wait());
             await sessions.patchSessionEntryCore(scope, () => ({
               restartRecoveryRuns: undefined,
               status: "done",
@@ -520,7 +501,7 @@ it.for([false, true])(
         }),
       );
       void command.catch(() => {});
-      await withinTest(directReady.promise, signal);
+      await wait(directGate.entered);
       const directOwner = expectDefined(
         getSessionControllerOperation(scope.sessionKey),
         "direct command controller owner",
@@ -529,15 +510,14 @@ it.for([false, true])(
         abortedLastRun: false,
         restartRecoveryRuns: [{ runId: instance.runId, lifecycleGeneration }],
       });
-      const ack = await fixture.send();
-      expect(ack.mock.calls[0]?.[1]).toMatchObject({ status: "started" });
+      expect((await fixture.send()).mock.calls[0]?.[1]).toMatchObject({ status: "started" });
       await waitForGate(
         queued.promise,
         dispatched.promise,
         "Dispatch returned without queue custody",
       );
       expect(isRpcSourceQueued(rpcSourceTesting.get(sendParams.idempotencyKey))).toBe(true);
-      await withinTest(dispatched.promise, signal);
+      await wait(dispatched.promise);
       expect(getSessionControllerOperation(scope.sessionKey)).toBe(directOwner);
       expect(consumed).toEqual([]);
       expect(injected).not.toHaveBeenCalled();
@@ -565,28 +545,22 @@ it.for([false, true])(
         await expectDefined(recorder, "queued input recorder").waitForPendingInputSettlement?.();
         expect(await pendingStates()).toEqual(["cancelled"]);
       }
-      releaseDirect.resolve();
-      await withinTest(cleanupReady.promise, signal);
+      directGate.release();
+      await wait(cleanupGate.entered);
       expect(getSessionControllerOperation(scope.sessionKey)).toBe(directOwner);
       expect(await pendingStates()).toEqual([cancel ? "cancelled" : "queued"]);
       expect(consumed).toEqual([]);
-      releaseCleanup.resolve();
+      cleanupGate.release();
       await command;
       if (cancel) {
         expect(consumed).toEqual([]);
         await fixture.finishDispatch();
-        expect(
-          vi
-            .mocked(context.broadcast)
-            .mock.calls.slice(broadcastsAtStop)
-            .filter(
-              ([event, payload]) =>
-                event === "chat" &&
-                isRecord(payload) &&
-                payload.runId === sendParams.idempotencyKey &&
-                payload.state === "delta",
-            ),
-        ).toEqual([]);
+        expect(vi.mocked(context.broadcast).mock.calls.slice(broadcastsAtStop)).not.toContainEqual(
+          expect.objectContaining({
+            0: "chat",
+            1: expect.objectContaining({ runId: sendParams.idempotencyKey, state: "delta" }),
+          }),
+        );
         expect(
           context.chatRunState.runs.get(sendParams.idempotencyKey)?.releaseBufferAuthority,
         ).toBeUndefined();
@@ -596,8 +570,8 @@ it.for([false, true])(
       expect(consumed).toEqual([expect.stringContaining(sendParams.message)]);
       expect((await listSessionPendingInputs(scope)).total).toBe(0);
     } finally {
-      releaseDirect.resolve();
-      releaseCleanup.resolve();
+      directGate.release();
+      cleanupGate.release();
       try {
         runs.detachActiveEmbeddedRun(scope.sessionId, handle);
         runAuthority.releaseAgentRunDelegatedAuthority(authority);
@@ -641,20 +615,15 @@ it("preserves direct pre-adoption rejection guidance instead of publishing queue
       };
     });
   runtime.execute.mockReset();
-  dispatchInboundMessageMock.mockImplementation(async (raw: unknown) => {
+  dispatchInboundMessageMock.mockImplementation((raw: unknown) => {
     const params = raw as Parameters<typeof dispatchInboundMessage>[0];
     inputSignal = params.replyOptions?.turnAdoptionLifecycle?.abortSignal;
-    try {
-      return await dispatchActual({ ...params, cfg: config });
-    } finally {
-      dispatched.resolve();
-    }
+    return dispatchActual({ ...params, cfg: config }).finally(() => dispatched.resolve());
   });
   const guidance =
     "⚠️ This conversation changed before your message could start. Check the latest messages, then try again if needed.";
   try {
-    const ack = await fixture.send();
-    expect(ack.mock.calls[0]?.[1]).toMatchObject({ runId, status: "started" });
+    expect((await fixture.send()).mock.calls[0]?.[1]).toMatchObject({ runId, status: "started" });
     await withinTest(dispatched.promise, signal);
     await fixture.finishDispatch();
     expect(inputSignal?.aborted).toBe(false);
@@ -668,9 +637,10 @@ it("preserves direct pre-adoption rejection guidance instead of publishing queue
       expect.objectContaining({ runId, state: "aborted" }),
       expect.anything(),
     );
-    const replay = await fixture.send();
-    expect(replay.mock.calls[0]?.[0]).toBe(false);
-    expect(replay.mock.calls[0]?.[1]).toMatchObject({ runId, status: "error", summary: guidance });
+    expect((await fixture.send()).mock.calls[0]).toMatchObject({
+      0: false,
+      1: { runId, status: "error", summary: guidance },
+    });
   } finally {
     rejectAdmission.mockRestore();
     await fixture.cleanup();

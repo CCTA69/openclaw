@@ -1,17 +1,15 @@
-import { execFile, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
-import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 // Explicit opt-in: ordinary CI never inspects, pulls, builds, or runs containers.
 // This is scripted-provider acceptance, NOT live model/inference evidence.
 const enabled = process.env.OPENCLAW_TEST_CORPORATE_DOCKER_EFFECTS === "1";
-const runFile = promisify(execFile);
 
 it.skipIf(!enabled)(
   "confines actual corporate Gateway tool effects with the real Docker sandbox",
@@ -33,12 +31,17 @@ it.skipIf(!enabled)(
       await import("./gateway-provider-fixture.test-support.js");
     const { buildMockOpenAiResponsesProvider } = await import("./test-openai-responses-model.js");
     const { DEFAULT_SANDBOX_IMAGE } = await import("../agents/sandbox/constants.js");
-    const docker = async (...args: string[]) =>
-      (await runFile("docker", args, { timeout: 20_000, maxBuffer: 1024 * 1024 })).stdout.trim();
+    const docker = (...args: string[]) =>
+      execFileSync("docker", args, {
+        encoding: "utf8",
+        timeout: 20_000,
+        maxBuffer: 1024 * 1024,
+      }).trim();
     // Fail setup, never silently skip an explicitly requested but unavailable backend.
     console.info("[corporate-effect-proof] phase=backend-preflight");
-    await docker("info", "--format", "{{.ID}}");
-    await docker("image", "inspect", DEFAULT_SANDBOX_IMAGE);
+    docker("info", "--format", "{{.ID}}");
+    console.info("[corporate-effect-proof] phase=docker-info-complete");
+    docker("image", "inspect", DEFAULT_SANDBOX_IMAGE);
 
     await using cleanup = new AsyncDisposableStack();
     // The supervised built Gateway owns its runtime outside the Vitest module graph.
@@ -234,10 +237,10 @@ it.skipIf(!enabled)(
     } satisfies OpenClawConfig;
     // Scope labels include workspace identity; this unique name prefix remains
     // fixture-owned even when setup fails before registry publication.
-    cleanup.defer(async () => {
-      const ids = await docker("ps", "-aq", "--filter", `name=${sandboxPrefix}`);
+    cleanup.defer(() => {
+      const ids = docker("ps", "-aq", "--filter", `name=${sandboxPrefix}`);
       if (ids) {
-        await docker("rm", "-f", ...ids.split(/\s+/));
+        docker("rm", "-f", ...ids.split(/\s+/));
       }
     });
     cleanup.defer(() => instance.stopGateway());
@@ -316,10 +319,10 @@ it.skipIf(!enabled)(
       "Corporate synthetic effect acceptance complete.",
     );
     // Supplemental backend evidence, not a substitute for the effects above.
-    const ids = await docker("ps", "-q", "--filter", `name=${sandboxPrefix}`);
+    const ids = docker("ps", "-q", "--filter", `name=${sandboxPrefix}`);
     expect(ids).not.toBe("");
     expect(ids.split(/\s+/)).toHaveLength(1);
-    const containers = JSON.parse(await docker("inspect", ids)) as Array<{
+    const containers = JSON.parse(docker("inspect", ids)) as Array<{
       HostConfig: {
         NetworkMode: string;
         ReadonlyRootfs: boolean;
