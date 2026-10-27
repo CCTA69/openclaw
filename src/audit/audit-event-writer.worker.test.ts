@@ -11,6 +11,7 @@ import {
   withSqliteWorkerReservationObservation,
   type SqliteWorkerReservationObservation,
 } from "../infra/worker-request-diagnostics.js";
+import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
 import {
   closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
@@ -24,7 +25,12 @@ import { observeMainThreadSql } from "../test-utils/main-thread-sql-spies.test-s
 import { progressInput } from "./audit-event-retention.test-support.js";
 import { listAuditEvents, recordAuditEventInDatabase } from "./audit-event-store.js";
 import { createAuditEventWriter, type AuditEventWriter } from "./audit-event-writer.js";
-import { input, messageEvent, decisionReceipt } from "./audit-event-writer.test-support.js";
+import {
+  input,
+  messageEvent,
+  decisionReceipt,
+  captureWork,
+} from "./audit-event-writer.test-support.js";
 import type { AuditWriterRequest } from "./audit-event-writer.types.js";
 import { auditOperations } from "./audit-event-writer.worker.js";
 import { createAuditEventRecorder } from "./audit-recorder.js";
@@ -62,6 +68,17 @@ afterEach(async () => {
 });
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
+function databaseFixture() {
+  return { env: { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-audit-writer-") } };
+}
+
+function identityFixture() {
+  const receipt = decisionReceipt();
+  const options = { ...receipt, now: receipt.occurredAt, runtimeInstanceId: "worker-runtime" };
+  const token = createExecutionIdentityAdmissionToken(receipt.runId, options);
+  return { receipt, token, options };
+}
+
 function messageRecorder(writer: AuditEventWriter) {
   return createAuditEventRecorder({
     scheduler: createTestGatewayScheduler(),
@@ -86,6 +103,10 @@ function writerFixture(
 
 function rowCounts(db: OpenClawStateDatabase["db"], tables: string[]) {
   return tables.map((table) => db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count);
+}
+
+function rows(db: OpenClawStateDatabase["db"], sql: string) {
+  return db.prepare(sql).all();
 }
 
 function loseFirstAuditBatchReply() {
@@ -138,9 +159,7 @@ function loseFirstAuditBatchReply() {
 
 describe("audit writer shared worker", () => {
   it("commits 32 queued items once, isolates a rejected item, and replays without duplicate rows", async () => {
-    const database = {
-      env: { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-audit-batch-") },
-    };
+    const database = databaseFixture();
     // Admit the shared database before counting only the audit command's transactions.
     await listAuditEvents({ database, limit: 1 });
     const requests: AuditWriterRequest[] = Array.from({ length: 32 }, (_, index) => ({
@@ -153,29 +172,25 @@ describe("audit writer shared worker", () => {
       },
     }));
     const observation: SqliteWorkerReservationObservation = { operations: new Set() };
-    const results = await withSqliteWorkerReservationObservation(observation, () =>
+    const execute = () =>
       executeOpenClawStateWorker(captureOpenClawStateWorkerContext(database), {
         type: "audit.writer.process",
         input: requests,
-      }),
-    );
+      });
+    const results = await withSqliteWorkerReservationObservation(observation, execute);
     expect(observation.transactionCount).toBe(1);
     const expectedResults = requests.map((_, index) =>
       index === 15 ? { status: "settled", error: expect.any(String) } : { status: "settled" },
     );
     expect(results).toEqual(expectedResults);
-    expect(
-      await executeOpenClawStateWorker(captureOpenClawStateWorkerContext(database), {
-        type: "audit.writer.process",
-        input: requests,
-      }),
-    ).toEqual(expectedResults);
+    expect(await execute()).toEqual(expectedResults);
     await closeOpenClawStateDatabaseAsync();
     const owner = openOpenClawStateDatabase(database).db;
     expect(
-      owner
-        .prepare("SELECT event_id, source_id, source_sequence FROM audit_events ORDER BY sequence")
-        .all(),
+      rows(
+        owner,
+        "SELECT event_id, source_id, source_sequence FROM audit_events ORDER BY sequence",
+      ),
     ).toEqual(
       Array.from({ length: 32 }, (_, index) => index)
         .filter((index) => index !== 15)
@@ -188,29 +203,15 @@ describe("audit writer shared worker", () => {
   });
 
   it("retries a failed batch commit on the same handle without retaining rolled-back facts", () => {
-    const database = {
-      env: { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-audit-commit-failure-") },
-    };
+    const database = databaseFixture();
     const opened = openOpenClawStateDatabase(database);
-    const receipt = decisionReceipt();
-    const token = createExecutionIdentityAdmissionToken(receipt.runId, {
-      contextId: receipt.contextId,
-      executionId: receipt.executionId,
-      now: receipt.occurredAt,
-    });
+    const { receipt, token, options } = identityFixture();
+    const envelope = captureExecutionIdentityAdmissionEnvelope(
+      admissionFacts(receipt.runId),
+      options,
+    );
     const requests: AuditWriterRequest[] = [
-      {
-        type: "record-execution-identity",
-        work: {
-          kind: "capture",
-          envelope: captureExecutionIdentityAdmissionEnvelope(admissionFacts(receipt.runId), {
-            contextId: receipt.contextId,
-            executionId: receipt.executionId,
-            now: receipt.occurredAt,
-            runtimeInstanceId: "rollback-runtime",
-          }),
-        },
-      },
+      { type: "record-execution-identity", work: captureWork(envelope) },
       { type: "record-execution-decision", receipt },
       {
         type: "record-event",
@@ -251,31 +252,21 @@ describe("audit writer shared worker", () => {
     expect(failCommit).toBe(false);
     expect(opened.db.isTransaction).toBe(false);
     expect(rowCounts(opened.db, ["audit_events", "audit_identity_keys"])).toEqual([0, 0]);
-    expect(
-      opened.db
-        .prepare(
-          `SELECT name FROM sqlite_schema WHERE name IN (
-            'execution_identity_contexts', 'execution_decision_facts',
-            'outbound_message_progress', 'outbound_message_execution_bindings'
-          )`,
-        )
-        .all(),
-    ).toEqual([]);
+    const companions = [
+      "execution_identity_contexts",
+      "execution_decision_facts",
+      "outbound_message_progress",
+      "outbound_message_execution_bindings",
+    ];
+    expect(companions.filter((table) => tableExists(opened.db, table))).toEqual([]);
 
     expect(auditOperations["audit.writer.process"](requests, context)).toEqual(
       requests.map(() => ({ status: "settled" })),
     );
-    expect(
-      rowCounts(opened.db, [
-        "audit_events",
-        "audit_identity_keys",
-        "execution_identity_contexts",
-        "execution_decision_facts",
-        "outbound_message_progress",
-        "outbound_message_execution_bindings",
-      ]),
-    ).toEqual([1, 1, 1, 1, 1, 1]);
-    expect(opened.db.prepare("SELECT event_id FROM audit_events").all()).toEqual([
+    expect(rowCounts(opened.db, ["audit_events", "audit_identity_keys", ...companions])).toEqual([
+      1, 1, 1, 1, 1, 1,
+    ]);
+    expect(rows(opened.db, "SELECT event_id FROM audit_events")).toEqual([
       { event_id: "rollback-terminal" },
     ]);
   });
@@ -286,20 +277,15 @@ describe("audit writer shared worker", () => {
     "worker death before batch commit",
     "worker death after batch commit",
   ] as const)("flushes the %s audit FIFO without host SQLite", async (mode) => {
-    const stateDir = tempDirs.make("openclaw-audit-writer-");
-    const database = { env: { OPENCLAW_STATE_DIR: stateDir } };
+    const database = databaseFixture();
     if (mode === "existing shared actor") {
       await listAuditEvents({ database, limit: 1 });
     }
-    const { contextId, executionId, runId, ...receipt } = decisionReceipt();
-    const token = createExecutionIdentityAdmissionToken(runId, {
-      contextId,
-      executionId,
-      now: receipt.occurredAt,
-    });
+    const { receipt: fullReceipt, token, options } = identityFixture();
+    const { contextId, executionId, runId, ...receipt } = fullReceipt;
     const nativeOpens = vi.spyOn(requireNodeSqlite(), "DatabaseSync");
     const counters = observeMainThreadSql({ includeClose: true });
-    const { writer, errors } = writerFixture(stateDir);
+    const { writer, errors } = writerFixture(database.env.OPENCLAW_STATE_DIR);
     const recorder = messageRecorder(writer);
     const clearSink = configureExecutionIdentityAdmissionSink(writer.recordExecutionIdentity);
     let restoreLostReply: (() => Promise<void>) | undefined;
@@ -311,9 +297,9 @@ describe("audit writer shared worker", () => {
         restoreLostReply = loseFirstAuditBatchReply();
       }
       enqueueExecutionIdentityContextAtAdmission(admissionFacts(runId), {
+        ...options,
         enabled: true,
         token,
-        runtimeInstanceId: "worker-runtime",
       });
       writer.recordExecutionDecision({ ...receipt, contextId, executionId, runId });
       writer.recordExecutionDecisionWork({
@@ -362,15 +348,14 @@ describe("audit writer shared worker", () => {
         "audit_events WHERE kind = 'message'",
       ]),
     ).toEqual([3, 1, 1, 1]);
-    expect(
-      JSON.stringify(owner.prepare("SELECT * FROM outbound_message_progress").all()),
-    ).not.toMatch(/raw-account|raw-conversation|raw-target/);
+    expect(JSON.stringify(rows(owner, "SELECT * FROM outbound_message_progress"))).not.toMatch(
+      /raw-account|raw-conversation|raw-target/,
+    );
     expect(errors).toHaveBeenCalledTimes(replayed ? 1 : 0);
     expect(
-      owner
-        .prepare("SELECT action FROM audit_events WHERE kind = 'agent_run' ORDER BY sequence")
-        .all()
-        .map(({ action }) => action),
+      rows(owner, "SELECT action FROM audit_events WHERE kind = 'agent_run' ORDER BY sequence").map(
+        ({ action }) => action,
+      ),
     ).toEqual(["agent.run.started", "agent.run.finished"]);
     const decisions = pageExecutionDecisionFactsForContextInDatabase(owner, {
       context: token,
@@ -378,7 +363,7 @@ describe("audit writer shared worker", () => {
       now: receipt.occurredAt + 1,
     }).receipts;
     expect(decisions).toHaveLength(2);
-    expect(decisions).toContainEqual({ ...receipt, contextId, executionId, runId });
+    expect(decisions).toContainEqual(fullReceipt);
     expect(
       decisions.find((item) => item.receiptId === "worker-private-decision")?.action.targetRef,
     ).toMatch(/^hmac-sha256:v1:/u);
@@ -411,9 +396,7 @@ describe("audit writer shared worker", () => {
   });
 
   it("keeps earlier family commits and later cleanup when one prune transaction fails", async () => {
-    const database = {
-      env: { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-audit-prune-failure-") },
-    };
+    const database = databaseFixture();
     const options = { ...database, database: openOpenClawStateDatabase(database) };
     const clock = vi.spyOn(Date, "now").mockReturnValue(0);
     const receipt = decisionReceipt();
