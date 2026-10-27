@@ -16,7 +16,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 import { buildCatalogModel } from "../plugin-sdk/provider-catalog.test-support.js";
 import { listKnownProviderAuthEnvVarNamesCore } from "../secrets/provider-env-vars.js";
-import { extractFirstTextBlock } from "../shared/chat-message-content.js";
+import { extractAssistantPhaseText } from "../shared/chat-message-content.js";
 import { acquireTestPortBlock } from "../test-utils/port-claims.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import type { GatewayClient } from "./client.js";
@@ -292,7 +292,7 @@ describeLive("quiet steering with real caller authority", () => {
       ? new RegExp(process.env.OPENCLAW_QUIET_STEERING_CASES)
       : undefined;
     const safeAssistantText = (message: unknown) => {
-      const text = extractFirstTextBlock(message) ?? "";
+      const text = extractAssistantPhaseText(message) ?? "";
       const credential = process.env.OPENAI_API_KEY;
       return (credential ? text.replaceAll(credential, "[redacted]") : text).slice(0, 700);
     };
@@ -564,6 +564,9 @@ describeLive("quiet steering with real caller authority", () => {
           const text = JSON.stringify(after.messages);
           expect(text).not.toContain("wasn’t queued");
           expect(text).not.toContain("will run after");
+          const visible = text + JSON.stringify(events);
+          expect(visible).not.toContain("/followup");
+          expect(visible).not.toContain("Your message is queued");
           for (const client of [incoming(), second()]) {
             const self = await client.request<{ profile: { id: string } }>("users.self", {});
             expect(text).toContain(self.profile.id);
@@ -737,14 +740,17 @@ describeLive("quiet steering with real caller authority", () => {
           authorityCase(false, highIncumbent),
         );
       }
-      const restartQueue = async (collaborative: boolean, fallback: "queue" | "reject") => {
+      const restartQueue = async (
+        collaborative: boolean | undefined,
+        fallback: "queue" | "reject",
+      ) => {
         for (const client of clients) {
           await client.stopAndWait();
         }
         await instance.stopGateway();
         config.messages = {
           queue: {
-            allowCollaborativeSteering: collaborative,
+            ...(collaborative !== undefined ? { allowCollaborativeSteering: collaborative } : {}),
             collaborativeSteeringFallback: fallback,
           },
         };
@@ -784,7 +790,8 @@ describeLive("quiet steering with real caller authority", () => {
         );
         return { rejected: rejected.runId, receipt: before.inputReceipts };
       });
-      await restartQueue(true, "queue");
+      // The public personal default, not an explicitly enabled collaboration override.
+      await restartQueue(undefined, "queue");
       for (const highIncumbent of [true, false]) {
         await caseRun(
           "collaborative steer intentionally retains incumbent authority; high incumbent=" +

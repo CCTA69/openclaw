@@ -67,7 +67,7 @@ You can customize corporate defaults too. Consequently, the name `corporate` alo
 
 ## Steering authority is execution-bound
 
-With collaboration enabled, Bob's admitted message can influence Alice's running turn, including when Bob has fewer permissions. **The turn keeps Alice's authority.** Bob remains the message author; neither identical request text nor a model explanation securely attributes a later tool call to Bob. A higher-privilege steer likewise does not upgrade a lower-privilege incumbent.
+With collaboration enabled, Bob's admitted message can influence Alice's running turn, including when Bob has fewer permissions. **The turn keeps Alice's authority.** Bob remains the message author; neither identical request text nor a model explanation securely attributes a later tool call to Bob. A higher-privilege steer likewise does not upgrade a lower-privilege incumbent. Tools that explicitly select an enrolled participant retain their existing requester-selection and authorization contract; that selection is not causal attribution to a message.
 
 With collaboration disabled and quiet queue fallback selected, each sender gets a separate execution with their requester identity and current applicable policy. Distinct senders are not collected merely because both ask "Summarize report.txt". Message-ID deduplication is not semantic deduplication. Compatible messages from one requester may still collect when that mode is selected.
 
