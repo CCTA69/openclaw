@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
+import * as sessionReads from "../config/sessions/session-entry-read-runtime.js";
 import { createProcessSupervisor } from "../process/supervisor/supervisor.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
@@ -75,7 +76,9 @@ test.skipIf(process.platform === "win32")(
           sessionKey,
           agentId: sessionKey.split(":")[1],
         });
+      using reads = vi.spyOn(sessionReads, "withSessionEntryReadOnlyInWorker");
       await tool(parent).execute("ready", { action: "poll", sessionId, timeout: 5_000 });
+      expect(reads).not.toHaveBeenCalled();
       expect(await tool(child).execute("poll", { action: "poll", sessionId })).toMatchObject({
         details: { status: "running", sessionId },
       });

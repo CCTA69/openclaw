@@ -16,8 +16,8 @@ export function resolveProcessToolScopeKey(params: {
   return agentId ? `agent:${agentId}` : undefined;
 }
 
-/** Resolve ancestor visibility from session-owned lineage, retaining its live authority. */
-export function prepareProcessToolScope(
+/** Resolve ancestor visibility only when needed, retaining its live authority. */
+export function createProcessToolScope(
   defaults: {
     scopeKey?: string;
     sessionKey?: string;
@@ -26,8 +26,7 @@ export function prepareProcessToolScope(
   },
   assertCallerCurrent: () => void,
 ) {
-  const scopeKey = defaults.scopeKey;
-  const agentId = defaults.agentId;
+  const { scopeKey, agentId, sessionKey, sessionStore } = defaults;
   const ancestors = new Set<string>();
   const authorities: PreparedSessionSourceAuthority[] = [];
   const assertCurrent = () => {
@@ -44,7 +43,7 @@ export function prepareProcessToolScope(
       await import("../config/sessions/session-source-authority.js");
     await releaseSessionSourceAuthorities(authorities);
   };
-  const scope = {
+  return {
     isInScope: (candidate?: { scopeKey?: string; agentId?: string } | null): boolean => {
       assertCurrent();
       if (!scopeKey) {
@@ -62,9 +61,10 @@ export function prepareProcessToolScope(
     },
     assertCurrent,
     [Symbol.asyncDispose]: release,
-  };
-  const prepare = async (scopeAgentId: string, initialSessionKey: string) => {
-    try {
+    resolveAncestorScopes: async () => {
+      if (!agentId || !sessionKey || scopeKey !== sessionKey) {
+        return;
+      }
       assertCurrent();
       const [
         { resolveSessionStorePathCore },
@@ -78,19 +78,15 @@ export function prepareProcessToolScope(
         import("../routing/session-key.js"),
       ]);
       assertCurrent();
-      const storePath = resolveSessionStorePathCore(defaults.sessionStore, {
-        agentId: scopeAgentId,
-      });
-      let key: string | undefined = initialSessionKey;
-      const visited = new Set<string>();
-      while (key && (parseAgentSessionKey(key)?.agentId ?? scopeAgentId) === scopeAgentId) {
-        if (visited.has(key) || visited.size >= 32) {
+      const storePath = resolveSessionStorePathCore(sessionStore, { agentId });
+      let key: string | undefined = sessionKey;
+      while (key && (parseAgentSessionKey(key)?.agentId ?? agentId) === agentId) {
+        if (ancestors.has(key) || ancestors.size >= 32) {
           throw new Error("Process session ancestry is invalid.");
         }
-        visited.add(key);
-        const sessionKey: string = key;
+        const ancestorKey: string = key;
         const entry: SessionEntry | undefined = await withSessionEntryReadOnlyInWorker(
-          { agentId: scopeAgentId, sessionKey, storePath, hydrateSkillPromptRefs: false },
+          { agentId, sessionKey: ancestorKey, storePath, hydrateSkillPromptRefs: false },
           assertCurrent,
           async (read, owner) => {
             if (!read.ok) {
@@ -101,8 +97,8 @@ export function prepareProcessToolScope(
             }
             const source = captureSessionEntrySourceAssertion({
               scope: {
-                agentId: scopeAgentId,
-                sessionKey,
+                agentId,
+                sessionKey: ancestorKey,
                 storePath: owner.source?.path ?? storePath,
               },
               readSource: owner.source,
@@ -123,17 +119,9 @@ export function prepareProcessToolScope(
         if (!entry) {
           break;
         }
-        ancestors.add(sessionKey);
+        ancestors.add(ancestorKey);
         key = entry.parentSessionKey ?? entry.spawnedBy;
       }
-      return scope;
-    } catch (error) {
-      await release();
-      throw error;
-    }
+    },
   };
-  // Exact/custom scopes need no asynchronous preparation before selecting a process.
-  return agentId && defaults.sessionKey && scopeKey === defaults.sessionKey
-    ? prepare(agentId, defaults.sessionKey)
-    : scope;
 }

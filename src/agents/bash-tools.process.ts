@@ -1,4 +1,3 @@
-import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { Static } from "typebox";
 import { attachInternalToolResultAcknowledgement } from "../../packages/agent-core/src/internal-hooks.js";
@@ -26,7 +25,7 @@ import {
   listRunningSessions,
   prepareSessionPoll,
 } from "./bash-process-registry.js";
-import { prepareProcessToolScope } from "./bash-process-scope.js";
+import { createProcessToolScope } from "./bash-process-scope.js";
 import { describeProcessTool } from "./bash-tools.descriptions.js";
 import {
   EXEC_MANUAL_COLLECTION_FOLLOW_UP,
@@ -313,11 +312,11 @@ export function createProcessTool(
         timeout?: unknown;
       };
 
-      const preparedScope = prepareProcessToolScope(defaults ?? {}, assertCallerCurrent);
-      await using scope = isPromiseLike(preparedScope) ? await preparedScope : preparedScope;
+      await using scope = createProcessToolScope(defaults ?? {}, assertCallerCurrent);
       const { isInScope, assertCurrent } = scope;
 
       if (params.action === "list") {
+        await scope.resolveAncestorScopes();
         return await runWithAgentToolSourceExecutionScope(assertSourceCurrent, async () => {
           assertCurrent();
           const sessions = [...listRunningSessions(), ...listFinishedSessions()]
@@ -384,8 +383,6 @@ export function createProcessTool(
       const sessionId = params.sessionId;
       const session = getSession(sessionId);
       const finished = getFinishedSession(sessionId);
-      const scopedSession = isInScope(session) ? session : undefined;
-      const scopedFinished = isInScope(finished) ? finished : undefined;
       const assertSelectedCurrent = (record: ProcessSession) => {
         assertCurrent();
         if (
@@ -397,6 +394,19 @@ export function createProcessTool(
           );
         }
       };
+      const selected = session ?? finished;
+      if (!selected) {
+        resetPollRetrySuggestion(sessionId);
+        return failText(missingProcessMessage(sessionId));
+      }
+      if (selected.scopeKey && selected.agentId === defaults?.agentId && !isInScope(selected)) {
+        await scope.resolveAncestorScopes();
+        if (isInScope(selected)) {
+          assertSelectedCurrent(selected);
+        }
+      }
+      const scopedSession = isInScope(session) ? session : undefined;
+      const scopedFinished = isInScope(finished) ? finished : undefined;
 
       const sessionControlError = (candidate: ProcessSession) =>
         !candidate.backgrounded
