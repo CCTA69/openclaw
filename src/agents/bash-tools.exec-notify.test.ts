@@ -1,5 +1,7 @@
 import "../test-utils/prepare-compiled-subprocesses.js";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { getCommandOwnerAuthority } from "../auto-reply/command-owner-authority.js";
+import { buildSessionEventContext } from "../auto-reply/reply/session-event-context.js";
 import type {
   SessionEventOutcome,
   SessionEventReceipt,
@@ -39,6 +41,7 @@ import {
   recoverExecExitNotifications,
 } from "./bash-tools.exec-notify.js";
 import { createProcessTool } from "./bash-tools.process.js";
+import type { RequesterOrigin } from "./requester-origin.js";
 import { isRuntimeToolAllowed } from "./tool-policy-match.js";
 import { attachToolAllowlistIntersection } from "./tool-policy-shared.js";
 import { withGatewayToolCallerIdentity } from "./tools/gateway-caller-context.js";
@@ -80,6 +83,7 @@ async function withFixture(
       notifyOnExit?: boolean;
       id?: string;
       toolsAllow?: string[];
+      requesterOrigin?: RequesterOrigin;
     }) => Promise<ReturnType<typeof createProcessSessionFixture>>;
     recover: (config?: OpenClawConfig) => Promise<void>;
   }) => Promise<void>,
@@ -140,7 +144,12 @@ async function withFixture(
           });
           addSession(process);
           await withGatewayToolCallerIdentity(
-            { agentId, sessionKey: key, sessionEventToolsAllow: options.toolsAllow },
+            {
+              agentId,
+              sessionKey: key,
+              sessionEventToolsAllow: options.toolsAllow,
+              requesterOrigin: options.requesterOrigin,
+            },
             () => prepareExecExitNotification(process, false),
           );
           markBackgrounded(process);
@@ -474,6 +483,50 @@ describe("background exec completion obligations", () => {
       expect(() => options.assertCurrent?.()).toThrow("notifications are disabled");
     });
   });
+
+  it.each([
+    ["owner", "456", true],
+    ["guest", "789", false],
+  ] as const)(
+    "gives the completion turn the current owner authority of its %s requester",
+    async (_requester, senderId, owner) => {
+      const ownerConfig: OpenClawConfig = {
+        ...initialConfig,
+        channels: { telegram: {} },
+        commands: { ownerAllowFrom: ["456"] },
+      };
+      await withFixture(async ({ background }) => {
+        setRuntimeConfigSnapshot(ownerConfig);
+        const process = await background({
+          requesterOrigin: {
+            sessionKey,
+            messageProvider: "telegram",
+            accountId: route.accountId,
+            senderId,
+          },
+        });
+        process.exitCode = 0;
+        await maybeNotifyOnExit(process, "completed", false);
+        const { text, options } = lastNotification();
+        const ctx = buildSessionEventContext({
+          cfg: ownerConfig,
+          agentId: "main",
+          sessionKey: options.sessionKey,
+          text,
+          options,
+          occurrenceId: "completion",
+          target: options.expectedTarget!,
+          assertCurrent() {},
+        });
+        expect(getCommandOwnerAuthority(ctx)?.isCurrent() === true).toBe(owner);
+        if (owner) {
+          // Owner rights are rechecked at use, so removing the owner revokes them.
+          setRuntimeConfigSnapshot({ ...ownerConfig, commands: { ownerAllowFrom: ["789"] } });
+          expect(getCommandOwnerAuthority(ctx)?.isCurrent()).toBe(false);
+        }
+      });
+    },
+  );
 
   it("preserves intersected tool restrictions through durable recovery", async () => {
     await withFixture(async ({ background, read, recover }) => {

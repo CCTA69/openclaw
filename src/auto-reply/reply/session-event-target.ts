@@ -30,6 +30,7 @@ import {
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { readAgentDeletionJournalStatusInWorker } from "../../state/agent-deletion-journal.read.js";
 import { deliveryContextFromSession } from "../../utils/delivery-context.read.js";
+import type { PreparedCommandOwnerAuthority } from "../command-auth.js";
 import { resolveEffectiveReplyRoute } from "./effective-reply-route.js";
 import type { SessionEventTarget } from "./session-event-contract.js";
 import { narrowSessionEventSettings } from "./session-event-policy.js";
@@ -39,7 +40,11 @@ const targetScopes = resolveGlobalSingleton(
   () =>
     new WeakMap<
       SessionEventTarget,
-      { env?: NodeJS.ProcessEnv; operatorAuthority?: AdmittedRunOperatorAuthority }
+      {
+        env?: NodeJS.ProcessEnv;
+        operatorAuthority?: AdmittedRunOperatorAuthority;
+        commandOwner?: PreparedCommandOwnerAuthority;
+      }
     >(),
 );
 
@@ -83,6 +88,11 @@ export async function captureSessionEventTargetForHost(
     producerPolicy?: Readonly<Pick<SessionEventTarget, "toolsAllow" | "settings">>;
     /** Original host-issued source; the producer owns its lifetime until enqueue. */
     operatorAuthority?: AdmittedRunOperatorAuthority;
+    /**
+     * Continue the producing turn's requester as command owner while they remain one.
+     * The identity comes from the host-owned caller, never from the producer.
+     */
+    retainRequesterOwner?: true;
   } = {},
 ): Promise<SessionEventTarget> {
   const operatorAuthority = options.operatorAuthority;
@@ -169,6 +179,24 @@ export async function captureSessionEventTargetForHost(
       options.producerPolicy?.settings && callerSettings
         ? narrowSessionEventSettings(options.producerPolicy.settings, callerSettings)
         : (options.producerPolicy?.settings ?? callerSettings);
+    const requester =
+      options.retainRequesterOwner && callerAgentMatches ? caller?.requesterOrigin : undefined;
+    const commandOwner =
+      requester?.messageProvider && requester.senderId
+        ? await (
+            await import("../command-auth.js")
+          ).prepareCommandOwnerAuthority(
+            cfg,
+            {
+              channel: requester.messageProvider,
+              accountId: requester.accountId ?? undefined,
+              senderId: requester.senderId,
+              senderE164: requester.senderE164 ?? undefined,
+            },
+            { env },
+          )
+        : undefined;
+    assertCaptureCurrent();
     const target: SessionEventTarget = {
       agentId,
       sessionKey,
@@ -187,7 +215,11 @@ export async function captureSessionEventTargetForHost(
         ? narrowSessionEventSettings(producerSettings, destinationSettings)
         : structuredClone(destinationSettings),
     };
-    targetScopes.set(target, { env, operatorAuthority });
+    targetScopes.set(target, {
+      env,
+      operatorAuthority,
+      ...(commandOwner?.source && commandOwner.isCurrent(cfg) ? { commandOwner } : {}),
+    });
     return target;
   } finally {
     preparedCaller?.release();
@@ -316,6 +348,12 @@ export function readSessionEventTargetOperatorAuthority(
   return targetScopes.get(target)?.operatorAuthority;
 }
 
+export function readSessionEventTargetCommandOwner(
+  target: SessionEventTarget,
+): PreparedCommandOwnerAuthority | undefined {
+  return targetScopes.get(target)?.commandOwner;
+}
+
 /** Coalesced work retains every producer's original destination and permission bound. */
 export function combineSessionEventTargetsForHost(
   targets: readonly SessionEventTarget[],
@@ -336,6 +374,8 @@ export function combineSessionEventTargetsForHost(
       target.chatType !== first.chatType ||
       readSessionEventTargetOperatorAuthority(target) !==
         readSessionEventTargetOperatorAuthority(first) ||
+      readSessionEventTargetCommandOwner(target)?.source !==
+        readSessionEventTargetCommandOwner(first)?.source ||
       channelRouteDedupeKey(target.deliveryContext) !== route
     ) {
       throw new Error(

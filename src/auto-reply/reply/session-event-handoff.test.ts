@@ -524,6 +524,30 @@ describe("session event target custody", () => {
     },
   );
 
+  it("does not batch an owner's completion with another requester's", async ({
+    state: { env },
+  }) => {
+    setRuntimeConfigSnapshot({
+      agents: { entries: { main: {} } },
+      channels: { telegram: {} },
+      commands: { ownerAllowFrom: ["456"] },
+    });
+    const capture = (senderId: string) =>
+      withGatewayToolCallerIdentity(
+        {
+          ...eventScope,
+          requesterOrigin: { sessionKey, messageProvider: "telegram", senderId },
+        },
+        () => captureTarget("main", sessionKey, { env, retainRequesterOwner: true }),
+      );
+    const owner = await capture("456");
+    const guest = await capture("789");
+    expect(() => combineSessionEventTargetsForHost([owner, guest])).toThrow(
+      "different captured destinations or requester authority",
+    );
+    expect(combineSessionEventTargetsForHost([owner, await capture("456")])).toBeDefined();
+  });
+
   it("retains store, route and producer limits across lookup", async ({
     state: { env, path: fixturePath, storePath },
   }) => {

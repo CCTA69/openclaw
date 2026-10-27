@@ -16,6 +16,7 @@ import type { MsgContext } from "../templating.js";
 import type { SessionEventOptions, SessionEventTarget } from "./session-event-contract.js";
 import {
   getSessionEventRuntimeConfig,
+  readSessionEventTargetCommandOwner,
   readSessionEventTargetEnvironment,
   readSessionEventTargetOperatorAuthority,
   resolveSessionEventKey,
@@ -142,6 +143,18 @@ export function buildSessionEventContext(params: {
       isCurrent: () => {
         params.assertCurrent();
         return true;
+      },
+    });
+  }
+  const commandOwner = readSessionEventTargetCommandOwner(target);
+  if (commandOwner) {
+    // A continuation of the requester's own work keeps their owner tools only while
+    // they are still an owner under the current config.
+    bindCommandOwnerAuthority(ctx, {
+      recoveryReference: commandOwner.recoveryReference,
+      isCurrent: () => {
+        params.assertCurrent();
+        return commandOwner.isCurrent(getSessionEventRuntimeConfig());
       },
     });
   }
