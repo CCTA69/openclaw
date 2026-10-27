@@ -250,7 +250,7 @@ function DashboardGrid(props: {
     () => ({ rows: props.rows, indexes: indexes(), focused: focused(), windowed: windowed() }),
     (next) => {
       if (!next) {
-        return;
+        return undefined;
       }
       const viewport = grid.closest<HTMLElement>(".content");
       const style = getComputedStyle(grid);
