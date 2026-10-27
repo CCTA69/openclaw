@@ -6,6 +6,7 @@ import {
   closeOpenClawStateDatabaseAsync,
   openOpenClawStateDatabase,
 } from "../state/openclaw-state-db.js";
+import { observeMainThreadSql } from "../test-utils/main-thread-sql-spies.test-support.js";
 import { requireNativeSqliteDatabase } from "../test-utils/native-sqlite.js";
 import { deriveDeliveryQueueRetentionColumns } from "./delivery-queue-retention-columns.js";
 import { pruneDeliveryQueueTombstones } from "./delivery-queue-sqlite-bound.js";
@@ -220,16 +221,20 @@ describe("delivery queue pending terminal transition", () => {
       // backfilled over-cap group untouched.
       expect(status("missing")).toBeUndefined();
       expect(retainedIds(queueName)).toEqual(ids.toSorted());
-      const prepare = vi.spyOn(db, "prepare");
+      let pruneSql: string | undefined;
+      const sql = observeMainThreadSql({
+        onStatement: (statement) => {
+          if (/^with\s/i.test(statement)) {
+            pruneSql = statement;
+          }
+        },
+      });
       try {
         if (mode === "exact lookup") {
           expect(status(ids[0])).toBeUndefined();
-          const prune = prepare.mock.results
-            .flatMap((result) => (result.type === "return" ? [result.value] : []))
-            .find((statement) => /^with\s/i.test(statement.sourceSQL));
-          expect(prune).toBeDefined();
+          expect(pruneSql).toBeDefined();
           const plan = db
-            .prepare(`EXPLAIN QUERY PLAN ${prune!.expandedSQL}`)
+            .prepare(`EXPLAIN QUERY PLAN ${pruneSql!}`)
             .all()
             .map((row) => row.detail)
             .join("\n");
@@ -241,7 +246,7 @@ describe("delivery queue pending terminal transition", () => {
           pruneDeliveryQueueTombstones(db, Date.now());
         }
       } finally {
-        prepare.mockRestore();
+        sql.restore();
       }
       expect(retainedIds(queueName)).toEqual([ids[1]]);
       expect(retainedIds(otherQueue)).toEqual(
