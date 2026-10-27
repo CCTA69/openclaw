@@ -50,6 +50,7 @@ import type {
   SessionManagerTranscriptCohort,
 } from "../../sessions/session-manager-view-types.js";
 import type { SessionManager } from "../../sessions/session-manager.js";
+import { getSteeringMessageIdentity } from "../../sessions/steering-message-identity.js";
 
 export type InitialUserTurnReplayPreparation = (
   signal?: AbortSignal,
@@ -541,6 +542,9 @@ export async function prepareForeignPendingUserTurns(
         (message) =>
           !(
             message.role === "user" &&
+            // Native admission may join a source sampled during preparation. Its
+            // runtime steering copy must reach the model; the saved row stays foreign.
+            getSteeringMessageIdentity(message) === undefined &&
             "idempotencyKey" in message &&
             typeof message.idempotencyKey === "string" &&
             keys.has(message.idempotencyKey)
