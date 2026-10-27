@@ -135,23 +135,28 @@ per-folder cap); warm tree cases open all folders before measuring the action.
 | `data-dashboards-search`                | Search by final title; assert one card.                                                 |
 | `data-dashboards-sort`                  | Sort by title; assert 1,000 represented results, bounded cards, and the leading title.  |
 | `data-dashboards-scroll`                | Scroll to the last gallery row; record nearby preview reads.                            |
-| `data-dashboards-responsive-navigation` | Verify native keyboard navigation and 3/2/1-column geometry at 1280/900/520 px.         |
+| `data-dashboards-responsive-navigation` | Verify native keyboard navigation, focus through resize, and 3/2/1-column geometry.     |
+| `data-dashboards-native-navigation`     | Press Enter on the final card; assert its exact route and visible destination report.  |
 | `data-workspace-first-render`           | Open Files; assert the 20-folder root listing.                                          |
 | `data-workspace-expand`                 | Open the last folder after the other 19; await its final child and record mounted rows. |
 | `data-workspace-search`                 | Search the loaded tree; assert 20 authoritative matches.                                |
 | `data-workspace-filter`                 | Select Changed; assert modified files and their folders.                                |
 | `data-workspace-scroll`                 | Scroll within the expanded 5,000-file Files panel.                                      |
 
-`data-dashboards-responsive-navigation` is correctness/capture proof; exclude it
-from timing comparisons. At widths of 1280, 900, and 520 px, it expects three,
+`data-dashboards-responsive-navigation` and `data-dashboards-native-navigation` are
+correctness/capture proof; exclude both from timing comparisons. At widths of
+1280, 900, and 520 px, the responsive scenario expects three,
 two, and one columns respectively, with no horizontal grid or document overflow.
-At each width, 15 consecutive native Tab moves from the first card check navigation
-across window boundaries. It then scrolls to and focuses the final card, waits for
-its author and report preview, and checks that its original native anchor retains
+Before deliberate refocusing at each width, the original final anchor must retain
+native focus through the resize. Then 15 consecutive native Tab moves from the
+first card check navigation across window boundaries. It scrolls to and focuses
+the final card, waits for its author and report preview, and checks that its original native anchor retains
 identity and focus. Shift+Tab reaches the preceding card and Tab returns to the
 final card. All 1,000 results remain represented; windowed renderers mount at most
 100 cards, with one native anchor and title per mounted card. The eager baseline
-may still mount all 1,000 cards. Gallery search covers the full data set; browser
+may still mount all 1,000 cards. The candidate-only screen rejects that eager
+fallback and requires a windowed gallery with at most 100 mounted cards, including
+at all three responsive widths. Gallery search covers the full data set; browser
 Find cannot search unmounted offscreen titles. The scenario preserves the viewport
 height and restores the original viewport before the harness's normal capture;
 it does not produce a screenshot at each tested width.

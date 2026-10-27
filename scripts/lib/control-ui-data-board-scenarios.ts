@@ -715,13 +715,26 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
         throw new Error("Final dashboard link is missing before scrolling");
       }
       const viewport = page.viewportSize()!;
+      let maxMountedCards = 0;
+      let windowedAtAllWidths = true;
       try {
+        await finalLink.focus();
+        await settle(page);
         for (const [width, columns] of [
           [1280, 3],
           [900, 2],
           [520, 1],
         ] as const) {
           await page.setViewportSize({ width, height: viewport.height });
+          await settle(page);
+          if (
+            !(await finalLink.evaluate(
+              (link, original) => link === original && document.activeElement === original,
+              originalLink,
+            ))
+          ) {
+            throw new Error(`Resizing lost the focused final dashboard at ${width}px`);
+          }
           await page
             .locator('[data-dashboard-session="agent:main:data-gallery-0"] a.dashboard-card__main')
             .focus();
@@ -780,6 +793,8 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
               }
             }, columns);
           const counts = await galleryPresentationCounts(page);
+          maxMountedCards = Math.max(maxMountedCards, counts.cards);
+          windowedAtAllWidths &&= counts.windowed;
           if (
             counts.representedCards !== galleryCount ||
             counts.cards !== counts.links ||
@@ -791,11 +806,42 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
             );
           }
         }
-        return { cards: galleryCount, responsiveLayouts: 3, retainedFinalLink: true };
+        return {
+          cards: galleryCount,
+          responsiveLayouts: 3,
+          retainedFinalLink: true,
+          focusRetainedThroughResize: true,
+          maxMountedCards,
+          windowedAtAllWidths,
+        };
       } finally {
         await page.setViewportSize(viewport);
         await originalLink.dispose();
       }
+    },
+  },
+  {
+    id: "data-dashboards-native-navigation",
+    dataPage: "dashboards",
+    diagnostic: "Native link activation and destination rendering; not a timing comparison.",
+    route: "/dashboards",
+    expected: "Enter on the final native dashboard link opens its route and saved report.",
+    fixtureOverrides: createGalleryFixture,
+    prepare: prepareGallery,
+    run: async (page) => {
+      const link = page.locator(
+        '[data-dashboard-session="agent:main:data-gallery-999"] a.dashboard-card__main',
+      );
+      await link.scrollIntoViewIfNeeded();
+      await link.focus();
+      await page.keyboard.press("Enter");
+      await page.waitForURL((url) => url.pathname === "/dashboard/main/data-gallery-999");
+      await page.locator(galleryHost).waitFor({ state: "hidden" });
+      await page
+        .locator("openclaw-board-document:visible openclaw-report-widget svg")
+        .first()
+        .waitFor({ state: "visible" });
+      return { activatedFinalLink: true, renderedDestinationReport: true };
     },
   },
   workspaceInitialScenario(0),
