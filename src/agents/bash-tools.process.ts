@@ -1,3 +1,4 @@
+import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { Static } from "typebox";
 import { attachInternalToolResultAcknowledgement } from "../../packages/agent-core/src/internal-hooks.js";
@@ -12,6 +13,7 @@ import {
   runWithAgentToolSourceExecutionScope,
 } from "./agent-tool-source-execution-guard.js";
 import { cancelBackgroundExecSession, isConfirmedRequestedStop } from "./bash-process-control.js";
+import { missingProcessMessage } from "./bash-process-id.js";
 import {
   acknowledgeNotifyOnExit,
   type ProcessSession,
@@ -24,6 +26,7 @@ import {
   listRunningSessions,
   prepareSessionPoll,
 } from "./bash-process-registry.js";
+import { prepareProcessToolScope } from "./bash-process-scope.js";
 import { describeProcessTool } from "./bash-tools.descriptions.js";
 import {
   EXEC_MANUAL_COLLECTION_FOLLOW_UP,
@@ -51,6 +54,9 @@ export type ProcessToolDefaults = {
   hasCronTool?: boolean;
   inputWaitIdleMs?: number;
   scopeKey?: string;
+  sessionKey?: string;
+  agentId?: string;
+  sessionStore?: string;
 };
 
 const DEFAULT_LOG_TAIL_LINES = 200;
@@ -256,15 +262,12 @@ export function createProcessTool(
   defaults?: ProcessToolDefaults,
 ): AgentToolWithMeta<typeof processSchema, unknown> {
   const assertSourceCurrent = captureAgentToolSourceExecutionGuard();
-  const scopeKey = defaults?.scopeKey;
   const inputWaitIdleMs = clampWithDefault(
     defaults?.inputWaitIdleMs ?? readEnvInt("OPENCLAW_PROCESS_INPUT_WAIT_IDLE_MS"),
     DEFAULT_INPUT_WAIT_IDLE_MS,
     MIN_INPUT_WAIT_IDLE_MS,
     MAX_INPUT_WAIT_IDLE_MS,
   );
-  const isInScope = (session?: { scopeKey?: string } | null) =>
-    !scopeKey || session?.scopeKey === scopeKey;
 
   const describeRunningSession = (session: ProcessSession) => {
     const lastOutputAt = session.processActivity?.lastOutputAtMs ?? session.startedAt;
@@ -294,11 +297,11 @@ export function createProcessTool(
     parameters: processSchema,
     outputSchema: ProcessToolOutputSchema,
     execute: async (_toolCallId, args, signal, _onUpdate): Promise<AgentToolResult<unknown>> => {
-      const assertCurrent = () => {
+      const assertCallerCurrent = () => {
         signal?.throwIfAborted();
         assertSourceCurrent();
       };
-      assertCurrent();
+      assertCallerCurrent();
       assertSupportedProcessParams(args);
       const action = (args as { action?: unknown }).action;
       if (!PROCESS_TOOL_ACTIONS.includes(action as ProcessToolAction)) {
@@ -309,6 +312,10 @@ export function createProcessTool(
       const params = args as Omit<Static<typeof processSchema>, "timeout"> & {
         timeout?: unknown;
       };
+
+      const preparedScope = prepareProcessToolScope(defaults ?? {}, assertCallerCurrent);
+      await using scope = isPromiseLike(preparedScope) ? await preparedScope : preparedScope;
+      const { isInScope, assertCurrent } = scope;
 
       if (params.action === "list") {
         return await runWithAgentToolSourceExecutionScope(assertSourceCurrent, async () => {
@@ -418,7 +425,7 @@ export function createProcessTool(
               });
             }
             resetPollRetrySuggestion(sessionId);
-            return failText(`No session found for ${sessionId}`);
+            return failText(missingProcessMessage(sessionId));
           }
           if (!scopedSession.backgrounded) {
             return failText(`Session ${sessionId} is not backgrounded.`);
@@ -454,7 +461,7 @@ export function createProcessTool(
                 return finishedPollResult(sessionId, scopedSession, pollScope);
               }
               resetPollRetrySuggestion(sessionId);
-              return failText(`No session found for ${sessionId}`);
+              return failText(missingProcessMessage(sessionId));
             }
             const delivery = prepareSessionPoll(scopedSession, pollScope);
             const { output: unreadOutput, outputDropped } = delivery;
@@ -491,7 +498,7 @@ export function createProcessTool(
             assertCurrent();
             const record = scopedSession ?? scopedFinished;
             if (!record) {
-              return failText(`No session found for ${sessionId}`);
+              return failText(missingProcessMessage(sessionId));
             }
             if (scopedSession && !scopedSession.backgrounded) {
               return failText(`Session ${sessionId} is not backgrounded.`);
@@ -547,7 +554,11 @@ export function createProcessTool(
             assertCurrent();
             const inputAction = params.action;
             if (!scopedSession) {
-              return failText(`No active session found for ${sessionId}`);
+              return failText(
+                scopedFinished
+                  ? `Session ${sessionId} is already finished.`
+                  : missingProcessMessage(sessionId),
+              );
             }
             const controlError = sessionControlError(scopedSession);
             if (controlError) {
@@ -659,7 +670,7 @@ export function createProcessTool(
                   finishedSessionDetails(sessionId, scopedFinished),
                 );
               }
-              return failText(`No active session found for ${sessionId}`);
+              return failText(missingProcessMessage(sessionId));
             }
             if (scopedFinished) {
               resetPollRetrySuggestion(sessionId);
@@ -671,9 +682,7 @@ export function createProcessTool(
                 { status: "completed" },
               );
             }
-            return failText(
-              `No ${params.action === "clear" ? "finished session" : "session"} found for ${sessionId}`,
-            );
+            return failText(missingProcessMessage(sessionId));
           });
         }
       }

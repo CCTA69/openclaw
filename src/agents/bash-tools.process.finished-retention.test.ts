@@ -54,7 +54,7 @@ test("real completed background commands retain only the newest fully readable p
   expect(evicted.details).toMatchObject({ status: "failed" });
   expect(evicted.content[0]).toMatchObject({
     type: "text",
-    text: expect.stringContaining(`No session found for ${evictedId}`),
+    text: expect.stringContaining(`Process ${evictedId} is no longer tracked`),
   });
 
   const newestId = expectDefined(finishedSessions.at(-1)?.id, "newest completed process");
