@@ -334,8 +334,10 @@ export function createUpdateDoctorDatabaseWriteCapture(
       if (generations && expectedGenerations) {
         // Like the native close receipt (#177831), this can absorb raw outside writes
         // during the update window only for databases this Doctor itself opened.
-        for (const pathname of openedSqlitePaths) {
-          expectedGenerations[pathname] = generations[pathname];
+        for (const [pathname, generation] of Object.entries(generations)) {
+          if (openedSqlitePaths.has(pathname)) {
+            expectedGenerations[pathname] = generation;
+          }
         }
         acceptEmptyReaderTransitions(observation!);
         unchanged &&= isDeepStrictEqual(generations, expectedGenerations);

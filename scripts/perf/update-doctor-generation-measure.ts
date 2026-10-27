@@ -188,8 +188,10 @@ async function measureLedgerWrites() {
   );
   const generationReader: typeof import("../../src/infra/update-database-generations.js") =
     await load("src/infra/update-database-generations.ts");
-  const receipts: typeof import("../../src/cli/update-cli/update-command-database-receipts.js") =
-    await load("src/cli/update-cli/update-command-database-receipts.ts");
+  // The baseline predates parent observation; measure its existing ledger owner unchanged.
+  const receipts: {
+    observeUpdateParentDatabaseWrites?: typeof import("../../src/cli/update-cli/update-command-database-receipts.js").observeUpdateParentDatabaseWrites;
+  } = await load("src/cli/update-cli/update-command-database-receipts.ts");
   try {
     for (const owner of ["native", "worker"] as const) {
       for (const captured of [false, true]) {
