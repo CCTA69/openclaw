@@ -13,6 +13,7 @@ import {
   updateSessionEntry,
   upsertSessionEntryCore,
 } from "../../../config/sessions/session-accessor.js";
+import { assertNoRetainedSessionSharingReads } from "../../../config/sessions/session-accessor.sqlite-diagnostics.test-support.js";
 import * as sessionReads from "../../../config/sessions/session-entry-read-runtime.js";
 import { testing } from "../../../sessions/session-controller.test-support.js";
 import { sessionChanges } from "../../../sessions/session-row-changes.js";
@@ -33,6 +34,7 @@ const nativeKey = "agent:main:native-lineage";
 afterEach(() => {
   testing.resetSessionControllerForTest();
   vi.restoreAllMocks();
+  assertNoRetainedSessionSharingReads();
 });
 
 it.each([
@@ -93,6 +95,8 @@ it.each([
   });
   const { sessionKey, sessionId } = attempt;
   const operation = createTestReplyOperation({ sessionKey, sessionId });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => operation.complete());
   await operation.bindToolAuthoritySnapshotAsync(prepareReplyToolAuthority(run));
   const admitted = await operation.bindToolAuthorityRouteAsync(attempt);
   const compatAssertCurrent = vi.fn(() => {
@@ -151,7 +155,6 @@ it.each([
     });
   const consumed = vi.fn(() => "admitted");
   const calls = observeMainThreadSql();
-  using cleanup = new DisposableStack();
   cleanup.defer(() => delayed.mockRestore());
   cleanup.defer(() => calls.restore());
   await using gate = bindingGate();
