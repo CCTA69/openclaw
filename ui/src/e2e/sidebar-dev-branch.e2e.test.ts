@@ -1,6 +1,11 @@
+import { writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { takeControlUiScreenshotFrame } from "../test-helpers/control-ui-e2e-screenshot.ts";
-import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
+import {
+  controlUiSessionUrl,
+  installMockGateway,
+  pauseVirtualClock,
+} from "../test-helpers/control-ui-e2e.ts";
 import { navigationDrawerToggle } from "../test-helpers/control-ui-navigation.ts";
 import {
   createControlUiE2eContextOptions,
@@ -64,7 +69,7 @@ suite.define(() => {
           label: index === 19 ? "CI timer" : `Release review ${index + 1}`,
           updatedAt: 1_780_000_000_000 - index * 60_000,
         }));
-        await installMockGateway(page, { sessionKey: sessions[0]!.key, sessions });
+        const gateway = await installMockGateway(page, { sessionKey: sessions[0]!.key, sessions });
         await page.emulateMedia({ colorScheme: "dark" });
         const response = await page.goto(suite.server.baseUrl);
         expect(response?.status()).toBe(200);
@@ -85,34 +90,55 @@ suite.define(() => {
             return last.isVisible();
           })
           .toBe(true);
-        await takeControlUiScreenshotFrame(page, sidebar, [body], {
+        const healthy = await takeControlUiScreenshotFrame(page, sidebar, [body], {
           animations: "disabled",
           scrollTo: sidebar.getByText("CI timer", { exact: true }),
           elements: [sidebar],
         });
-        const footer = sidebar.locator(".sidebar-shell__footer");
-        await footer.locator(".gateway-status").waitFor({ state: "detached" });
-        const chrome = await body.evaluate((element) => {
+        expect(await sidebar.locator(".sidebar-shell__footer").count()).toBe(0);
+        const unusedSpace = await body.evaluate((element) => {
           const shell = element.closest(".sidebar-shell")!;
-          const footerBounds = shell
-            .querySelector(".sidebar-shell__footer")!
-            .getBoundingClientRect();
-          const slotBounds = shell
-            .querySelector(".sidebar-shell__connection")!
-            .getBoundingClientRect();
-          return {
-            bodyToFooter: footerBounds.top - element.getBoundingClientRect().bottom,
-            footerToShell: shell.getBoundingClientRect().bottom - footerBounds.bottom,
-            slotHeight: slotBounds.height,
-            footerOverhead: footerBounds.height - slotBounds.height,
-          };
+          return (
+            shell.getBoundingClientRect().bottom -
+            element.getBoundingClientRect().bottom -
+            Number.parseFloat(getComputedStyle(shell).paddingBottom)
+          );
         });
-        expect(Math.abs(chrome.bodyToFooter)).toBeLessThanOrEqual(1);
-        expect(Math.abs(chrome.footerToShell)).toBeLessThanOrEqual(1);
-        expect(chrome.slotHeight).toBeGreaterThan(0);
-        // Only the connection row, 4px block padding and 1px border consume space.
-        expect(chrome.footerOverhead).toBeLessThanOrEqual(9);
+        expect(Math.abs(unusedSpace)).toBeLessThanOrEqual(1);
         expect(await sidebar.locator(".sidebar-footer-branch").count()).toBe(0);
+        const connectedBounds = await body.boundingBox();
+        await page.clock.install();
+        await pauseVirtualClock(page);
+        await gateway.setOnline(false);
+        await page.clock.runFor(2_001);
+        const flag = sidebar.locator(".sidebar-shell__connection");
+        await flag.waitFor({ state: "visible" });
+        await page.clock.runFor(4_001);
+        const reconnecting = await takeControlUiScreenshotFrame(page, sidebar, [body, flag], {
+          animations: "disabled",
+          elements: [sidebar],
+        });
+        expect(await flag.isVisible()).toBe(true);
+        expect(await body.boundingBox()).toEqual(connectedBounds);
+        await gateway.setOnline(true);
+        await page.clock.resume();
+        await flag.waitFor({ state: "detached" });
+        expect(await body.boundingBox()).toEqual(connectedBounds);
+        await last.click();
+        await expect
+          .poll(() => page.url())
+          .toBe(controlUiSessionUrl(suite.server.baseUrl, sessions[19]!.key));
+        if (process.env.OPENCLAW_CAPTURE_UI_PROOF === "1") {
+          for (const [state, frame] of [
+            ["healthy", healthy],
+            ["reconnecting", reconnecting],
+          ] as const) {
+            await writeFile(
+              `${suite.artifactDir}/sidebar-full-${viewport.name}-${state}.png`,
+              frame.elements[0]!.png,
+            );
+          }
+        }
       },
     );
   });

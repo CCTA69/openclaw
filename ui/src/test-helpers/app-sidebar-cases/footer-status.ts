@@ -204,7 +204,7 @@ describe("AppSidebar gateway footer subtitle", () => {
     await sidebar.updateComplete;
     expect(card()?.getAttribute("data-connection-status")).toBe("connected");
     expect(card()?.getAttribute("aria-label")).toBe("Identity and app menu for Owner: Connected");
-    expect(q(".sidebar-shell__connection")?.textContent).toContain("Connected");
+    expect(q(".sidebar-shell__connection")).toBeNull();
 
     sidebar.connectionRecovery = false;
     await sidebar.updateComplete;
