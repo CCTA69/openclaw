@@ -843,10 +843,10 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
       await report.locator("svg").waitFor({ state: "visible" });
       await report.getByText("Throughput 0", { exact: true }).waitFor({ state: "visible" });
       await page.waitForFunction(() => {
-        const report = document.querySelector(
+        const widget = document.querySelector(
           '.board-session-surface:not([hidden]) [data-widget-name="data-widget-0"] openclaw-report-widget',
         );
-        const values = report?.querySelectorAll(".board-report__values dd");
+        const values = widget?.querySelectorAll(".board-report__values dd");
         return (
           values?.length === 12 &&
           values[0]?.textContent === "10" &&
