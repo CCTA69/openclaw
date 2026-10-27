@@ -77,14 +77,16 @@ non-root-skip mode, not permission to skip install proof. Published correction
 versions must prove upgrade from their base stable package. Postpublish use:
 
 ```bash
+OPENCLAW_NPM_EXPECTED_WORKFLOW_REF=refs/tags/release-publish/<tooling-sha12>-<epoch> \
+OPENCLAW_NPM_EXPECTED_WORKFLOW_SHA=<tooling-sha> \
 node --import tsx scripts/openclaw-npm-postpublish-verify.ts <published-version>
 ```
 
-Without `OPENCLAW_NPM_EXPECTED_WORKFLOW_REF`/`_SHA`, the verifier derives the
-publish tooling from the attested `release-publish/*` tag and accepts it only
-when GitHub still has that exact lightweight tag at the attested commit and the
-commit is reachable from `main` (requires `gh` auth). Set both variables only to
-pin an explicit identity; a partial override is rejected.
+This branch's verifier does not derive the expected protected tooling identity.
+For a `release-publish/*` publication, supply both values from the approved
+publisher run and its verified tooling tag, not from an unverified attestation.
+The tag and SHA must match the actual publication; missing or mismatched pins
+are rejected. Newer main's automatic derivation does not apply to this invocation.
 
 Run it from a checkout of the Release SHA once the registry lists the version
 (see [regular release](regular-release.md#publish-and-verify)).
@@ -125,18 +127,20 @@ also defers Package Acceptance Telegram, broad live/E2E, QA-live and Parallels.
 Package Telegram deferral applies to beta-profile `main` too, but it does not
 qualify for `npm-beta-v1`.
 
-FRV `normalCi` Windows Node shards and all other hard-gate failures block. Decide
+FRV `normalCi` Windows Node shards and all other selected failures block. Decide
 blocker or flake for every failure,
 rerun flakes on the same Release SHA at most twice, and file a fix-in-parallel
-issue/PR on `main`. Do not re-cut solely to clear a flake. Every unwaived selected
-job must pass, and FRV itself must conclude success before publication. See the
+issue/PR on `main`. Do not re-cut, change P, or start another FRV solely to
+waive a flake. Every selected job must pass, and FRV itself must conclude success
+before publication. See the
 [CI skill](../../release-openclaw-ci/SKILL.md#publication-requirements).
 Native platform publication remains independent and follows its own gates.
 All-group cross-OS qualification requires all nine Linux/Windows/macOS
 install/upgrade pairs. Focused recovery may select individual lanes but does
-not itself qualify publication. Exact live-provider/Telegram failures may use
-only the [checked-in release-tooling policy](../../../../docs/reference/full-release-validation/evidence.md#release-tooling-waivers),
-evaluated within FRV. Hard gates and soak cannot be waived.
+not itself qualify publication. This branch's candidate-owned Release Decision
+has no trusted-P waiver support, including for live-provider/Telegram failures.
+Keep the [strict branch policy](../SKILL.md#shared-release-boundaries); a newer P
+cannot change the frozen workflow's decision rules.
 
 ## Postpublish confidence
 

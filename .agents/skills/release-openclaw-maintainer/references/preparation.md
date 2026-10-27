@@ -112,18 +112,16 @@ provenance follows current `origin/main`; retain a release-branch PR only while
 its change has not been forward-ported. Do not change root README as routine
 release prep or prefill a future changelog section.
 
-Before freezing Code SHA, verify and stamp the state and agent schema-history
-tables alongside the changelog:
-
-```bash
-node scripts/release-schema-history.mjs YYYY.M.PATCH-beta.N
-```
-
-Use the exact approved version (stable cuts omit `-beta.N`). This stamps only
-`Unreleased` schema rows in `docs/reference/database-schemas/{state,agent}-schema-history.md`;
-existing release attributions and migration notes are preserved. Commit both
-histories with the version and release notes before qualification, not as a
-later changelog-only delta.
+Before freezing Code SHA, audit the state and agent schema-history tables
+alongside the changelog using the procedure below. This branch has no
+`release-schema-history.mjs` helper: edit
+`docs/reference/database-schemas/{state,agent}-schema-history.md` manually.
+For each row proven unpublished by the history audit, replace only its
+`Unreleased` release cell with the exact approved version. Preserve established
+release attributions and migration notes; apply the first-stable correction
+below only when supported by tag history. Review the two-file diff and commit
+any history changes with the version and release notes before qualification,
+not as a later changelog-only delta.
 
 Before stamping, manually audit every `Unreleased` row against complete Git
 history and release tags. A shallow checkout or missing tags cannot establish
