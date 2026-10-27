@@ -111,6 +111,13 @@ esac
   );
   const sips = executable(root, "sips", 'cp "$7" "$9"\n');
   executable(root, "file", "echo 'JPEG image data, 1440x2560'\n");
+  executable(
+    root,
+    "git",
+    `[[ "$*" == "-C $FIXTURE_ROOT rev-parse HEAD" ]] || exit 97
+printf '%s\\n' '${"a".repeat(40)}'
+`,
+  );
   // Readiness polling is exercised without spending real time between fixed UI states.
   executable(root, "sleep", "exit 0\n");
   const result = run({
