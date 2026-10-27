@@ -1,5 +1,5 @@
 import { asRecord } from "@openclaw/normalization-core/record-coerce";
-import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import peleScriptUrl from "../../../packages/mermaid-renderer/src/pele-script-url.ts";
 import "../../../packages/mermaid-renderer/src/native.ts";
 import { createDeferred } from "../../../test/helpers/promise.ts";
@@ -87,6 +87,7 @@ it("delivers ordered passive images at the requested viewport width", async () =
 it("keeps a small diagram at layout scale within the iPad physical bitmap cap", async () => {
   await render("ipad", "flowchart TD\nDraft --> Review\nReview --> Ship", 694);
   const reply = replies[0];
+  assert.isDefined(reply);
   expect(reply.success, reply.error).toBe(true);
   const root = new DOMParser().parseFromString(reply.svg!, "image/svg+xml").querySelector("svg")!;
   const image = diagram.querySelector("img")!;
