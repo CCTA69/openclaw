@@ -95,108 +95,107 @@ function visibleDashboardRows(data: DashboardsRouteData, filters: DashboardGalle
     );
 }
 
-function DashboardCard(props: {
-  data: DashboardsRouteData;
-  row: DashboardRow;
-  handlers: DashboardGalleryHandlers;
-  gatewaySnapshot?: ApplicationGatewaySnapshot;
-  contentRef: (element: HTMLElement) => void;
-}) {
-  const target = createMemo(() =>
-    isSessionKeyAddressable(props.row.key, props.data.globalScope)
-      ? sessionNavigationTarget({
-          face: "dashboard",
-          sessionKey: props.row.key,
-          fallbackAgentId:
-            props.row.key === "global"
-              ? props.row.agentId?.trim() || props.data.fallbackAgentId
-              : props.data.fallbackAgentId,
-          basePath: props.data.basePath,
-          row: props.row,
-          mainKey: props.data.mainKey,
-        })
-      : null,
-  );
-  const author = () => dashboardAuthor(props.row, props.data.fallbackAgentId);
-  const title = createMemo(() => resolveSessionDisplayName(props.row.key, props.row));
-  const Content = () => (
-    <>
-      <div class="dashboard-preview" aria-hidden="true" inert>
-        <DashboardPreview
-          gatewaySnapshot={props.gatewaySnapshot}
-          sessionKey={props.row.key}
-          agentId={props.row.agentId}
-        />
-      </div>
-      <div class="dashboard-card__body">
-        <div class="dashboard-card__heading">
-          <h2>{title()}</h2>
-          <Show when={props.row.status === "running"}>
-            <span class="dashboard-card__live">
-              <i />
-              {t("dashboardsPage.live")}
-            </span>
-          </Show>
-        </div>
-        <div class="dashboard-card__author">
-          <span class="dashboard-card__avatar" aria-hidden="true">
-            {author().label.trim().charAt(0).toLocaleUpperCase() || "?"}
-          </span>
-          <span>{t("dashboardsPage.byAuthor", { author: author().label })}</span>
-        </div>
-      </div>
-      <footer class="dashboard-card__footer">
-        <span>
-          {props.row.updatedAt
-            ? t("dashboardsPage.updated", { time: formatRelativeTimestamp(props.row.updatedAt) })
-            : t("dashboardsPage.updatedUnknown")}
-        </span>
-        <Show when={target()}>
-          <span class="dashboard-card__open" aria-hidden="true">
-            <Icon name="arrowUpRight" />
-          </span>
-        </Show>
-      </footer>
-    </>
-  );
-  return (
-    <article class="dashboard-card" data-dashboard-session={props.row.key}>
-      <Show
-        when={target()}
-        fallback={
-          <div class="dashboard-card__main" ref={props.contentRef}>
-            <Content />
-          </div>
-        }
-      >
-        {(destination) => (
-          <a
-            ref={props.contentRef}
-            class="dashboard-card__main"
-            href={destination().href}
-            aria-label={title()}
-            onClick={(event: MouseEvent) => {
-              const current = target();
-              if (current && props.handlers.onNavigate && shouldHandleNavigationClick(event)) {
-                event.preventDefault();
-                props.handlers.onNavigate("dashboard", current.options);
-              }
-            }}
-          >
-            <Content />
-          </a>
-        )}
-      </Show>
-    </article>
-  );
-}
-
 function DashboardGrid(props: {
   data: DashboardsRouteData;
   rows: DashboardRow[];
   handlers: DashboardGalleryHandlers;
   gatewaySnapshot?: ApplicationGatewaySnapshot;
 }) {
+  function DashboardCard(childProps: {
+    row: DashboardRow;
+    contentRef: (element: HTMLElement) => void;
+  }) {
+    const target = createMemo(() =>
+      isSessionKeyAddressable(childProps.row.key, props.data.globalScope)
+        ? sessionNavigationTarget({
+            face: "dashboard",
+            sessionKey: childProps.row.key,
+            fallbackAgentId:
+              childProps.row.key === "global"
+                ? childProps.row.agentId?.trim() || props.data.fallbackAgentId
+                : props.data.fallbackAgentId,
+            basePath: props.data.basePath,
+            row: childProps.row,
+            mainKey: props.data.mainKey,
+          })
+        : null,
+    );
+    const author = () => dashboardAuthor(childProps.row, props.data.fallbackAgentId);
+    const title = createMemo(() => resolveSessionDisplayName(childProps.row.key, childProps.row));
+    const Content = () => (
+      <>
+        <div class="dashboard-preview" aria-hidden="true" inert>
+          <DashboardPreview
+            gatewaySnapshot={props.gatewaySnapshot}
+            sessionKey={childProps.row.key}
+            agentId={childProps.row.agentId}
+          />
+        </div>
+        <div class="dashboard-card__body">
+          <div class="dashboard-card__heading">
+            <h2>{title()}</h2>
+            <Show when={childProps.row.status === "running"}>
+              <span class="dashboard-card__live">
+                <i />
+                {t("dashboardsPage.live")}
+              </span>
+            </Show>
+          </div>
+          <div class="dashboard-card__author">
+            <span class="dashboard-card__avatar" aria-hidden="true">
+              {author().label.trim().charAt(0).toLocaleUpperCase() || "?"}
+            </span>
+            <span>{t("dashboardsPage.byAuthor", { author: author().label })}</span>
+          </div>
+        </div>
+        <footer class="dashboard-card__footer">
+          <span>
+            {childProps.row.updatedAt
+              ? t("dashboardsPage.updated", {
+                  time: formatRelativeTimestamp(childProps.row.updatedAt),
+                })
+              : t("dashboardsPage.updatedUnknown")}
+          </span>
+          <Show when={target()}>
+            <span class="dashboard-card__open" aria-hidden="true">
+              <Icon name="arrowUpRight" />
+            </span>
+          </Show>
+        </footer>
+      </>
+    );
+    return (
+      <article class="dashboard-card" data-dashboard-session={childProps.row.key}>
+        <Show
+          when={target()}
+          fallback={
+            <div class="dashboard-card__main" ref={childProps.contentRef}>
+              <Content />
+            </div>
+          }
+        >
+          {(destination) => (
+            <a
+              ref={childProps.contentRef}
+              class="dashboard-card__main"
+              href={destination().href}
+              aria-label={title()}
+              onClick={(event: MouseEvent) => {
+                const current = target();
+                if (current && props.handlers.onNavigate && shouldHandleNavigationClick(event)) {
+                  event.preventDefault();
+                  props.handlers.onNavigate("dashboard", current.options);
+                }
+              }}
+            >
+              <Content />
+            </a>
+          )}
+        </Show>
+      </article>
+    );
+  }
+
   let grid!: HTMLDivElement;
   let scroller: HTMLElement | null = null;
   let columns = 3;
@@ -384,13 +383,7 @@ function DashboardGrid(props: {
         style={position()}
         onFocusIn={() => setFocused(card.row.key)}
       >
-        <DashboardCard
-          data={props.data}
-          row={card.row}
-          handlers={props.handlers}
-          gatewaySnapshot={props.gatewaySnapshot}
-          contentRef={bindContent}
-        />
+        <DashboardCard row={card.row} contentRef={bindContent} />
       </div>
     );
   }
