@@ -837,10 +837,22 @@ export const dataBoardScenarios: readonly InteractionScenario[] = [
       await page.keyboard.press("Enter");
       await page.waitForURL((url) => url.pathname === "/dashboard/main/data-gallery-999");
       await page.locator(galleryHost).waitFor({ state: "hidden" });
-      await page
-        .locator("openclaw-board-document:visible openclaw-report-widget svg")
-        .first()
-        .waitFor({ state: "visible" });
+      const report = page.locator(
+        '.board-session-surface:visible [data-widget-name="data-widget-0"] openclaw-report-widget',
+      );
+      await report.locator("svg").waitFor({ state: "visible" });
+      await report.getByText("Throughput 0", { exact: true }).waitFor({ state: "visible" });
+      await page.waitForFunction(() => {
+        const report = document.querySelector(
+          '.board-session-surface:not([hidden]) [data-widget-name="data-widget-0"] openclaw-report-widget',
+        );
+        const values = report?.querySelectorAll(".board-report__values dd");
+        return (
+          values?.length === 12 &&
+          values[0]?.textContent === "10" &&
+          values[11]?.textContent === "87"
+        );
+      });
       return { activatedFinalLink: true, renderedDestinationReport: true };
     },
   },
