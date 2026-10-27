@@ -3083,8 +3083,9 @@ process.stdout.write(/^[a-z-]{1,32}$/.test(String(status)) ? status : "unreadabl
 ' "$root/native.receipt.json")" || status=unreadable
 		case "$status" in
 		absent | migrated | restored | finished)
-			if bounded 1800 "$runuser_bin" -u openclaw -- env -i PATH=/usr/bin:/bin \
-				find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system -- {} + && rmdir -- "$root"; then
+			# GNU find refuses to run from a working directory the runtime account cannot enter.
+			if (cd / && bounded 1800 "$runuser_bin" -u openclaw -- env -i PATH=/usr/bin:/bin \
+				find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system -- {} +) && rmdir -- "$root"; then
 				printf 'RETIRED_NATIVE_UPDATE=%s status=%s\n' "$name" "$status"
 			else
 				printf 'RETAIN native update removal failed root=%s\n' "$name" >&2
