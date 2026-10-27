@@ -275,7 +275,7 @@ async function prepareGallery(page: Page) {
   await page.waitForFunction(
     ({ selector, count }) => {
       const host = document.querySelector(selector);
-      const represented = host?.querySelector(".dashboards-grid [aria-setsize]");
+      const represented = host?.querySelector(".dashboards-grid > [aria-setsize]");
       return (
         Number(represented?.getAttribute("aria-setsize")) === count ||
         host?.querySelectorAll("[data-dashboard-session]").length === count
@@ -289,7 +289,7 @@ async function prepareGallery(page: Page) {
 async function galleryPresentationCounts(page: Page) {
   return page.locator(galleryHost).evaluate((host) => {
     const cards = host.querySelectorAll("[data-dashboard-session]").length;
-    const represented = host.querySelector(".dashboards-grid [aria-setsize]");
+    const represented = host.querySelector(".dashboards-grid > [aria-setsize]");
     return {
       cards,
       links: host.querySelectorAll("[data-dashboard-session] a.dashboard-card__main").length,
