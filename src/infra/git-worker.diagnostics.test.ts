@@ -1,14 +1,12 @@
-import { execFile } from "node:child_process";
 import { channel } from "node:diagnostics_channel";
 import { performance } from "node:perf_hooks";
-import { promisify } from "node:util";
 import { WorkerTaskPoolCore } from "@openclaw/worker-runtime";
 import { afterEach, expect, it, vi } from "vitest";
 import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { createNestedGitEnv } from "../../test/helpers/temp-repo.js";
 import { drainGlobalSingletonLifecycleState } from "../shared/global-singleton.js";
 import * as diagnostics from "./diagnostic-events.js";
 import type { GitWorkerCommand } from "./git-worker-contract.js";
+import { repository } from "./git-worker-lifecycle.test-support.js";
 import { runGitWorkerOperation } from "./git-worker.js";
 import { getTrackedWorkerLifecycleSnapshot } from "./worker-cpu.js";
 
@@ -38,88 +36,32 @@ afterEach(async () => {
 });
 
 const tempDirs = createTempDirTracker();
-const execFileAsync = promisify(execFile);
-
-type IdleCase = {
-  owner: string;
-  floor: boolean;
-  gitRepo?: true;
-  command: (root: string) => GitWorkerCommand;
-  expected: unknown;
-};
-
-const idleCases: IdleCase[] = [
-  {
-    owner: "reads",
-    floor: false,
-    command: () => ({ type: "repository.identities", input: { roots: [] } }),
-    expected: [],
-  },
-  {
-    owner: "summary",
-    floor: false,
-    gitRepo: true,
-    command: (cwd) => ({ type: "checkout.diff", input: { cwd, summaryOnly: true } }),
-    expected: expect.objectContaining({ files: [], additions: 0, deletions: 0 }),
-  },
-  {
-    owner: "content",
-    floor: true,
-    gitRepo: true,
-    command: (cwd) => ({ type: "checkout.diff", input: { cwd } }),
-    expected: expect.objectContaining({ files: [], additions: 0, deletions: 0 }),
-  },
-  {
-    owner: "workspace",
-    floor: true,
-    command: (root) => ({
-      type: "workspace.manifest.nodes",
-      input: { payload: new TextEncoder().encode(JSON.stringify({ root, paths: [] })) },
-    }),
-    expected: {
-      value: [],
-      hashes: [],
-      metrics: { contentHashCount: 0, memoHitCount: 0 },
-    },
-  },
-  {
-    owner: "worktrees",
-    floor: false,
-    command: (root) => ({ type: "worktree.directory-size", input: { root } }),
-    expected: 0,
-  },
-  {
-    owner: "worktreeMaintenance",
-    floor: false,
-    command: () => ({ type: "worktree.eviction-repositories", input: { repoRoots: [] } }),
-    expected: [],
-  },
-];
-
-it.each(idleCases)("preserves the $owner idle policy (floor=$floor)", async (entry) => {
+it.each([
+  ["reads", false],
+  ["summary", false],
+  ["content", true],
+  ["workspace", true],
+  ["worktrees", false],
+  ["worktreeMaintenance", false],
+] as const)("preserves the %s idle policy (floor=%s)", async (owner, floor) => {
   const root = tempDirs.make("openclaw-git-idle-policy-");
-  if (entry.gitRepo) {
-    const options = { cwd: root, env: createNestedGitEnv() };
-    await execFileAsync("git", ["init", "--template=", "--initial-branch=main"], options);
-    await execFileAsync(
-      "git",
-      [
-        "-c",
-        "user.name=Fixture",
-        "-c",
-        "user.email=fixture@example.invalid",
-        "-c",
-        "commit.gpgsign=false",
-        "-c",
-        "core.hooksPath=/dev/null",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "synthetic",
-      ],
-      options,
-    );
-  }
+  const cwd = owner === "summary" || owner === "content" ? await repository(root) : root;
+  const diff = expect.objectContaining({ files: [], additions: 0, deletions: 0 });
+  const cases: Record<typeof owner, [GitWorkerCommand, unknown]> = {
+    reads: [{ type: "repository.identities", input: { roots: [] } }, []],
+    summary: [{ type: "checkout.diff", input: { cwd, summaryOnly: true } }, diff],
+    content: [{ type: "checkout.diff", input: { cwd } }, diff],
+    workspace: [
+      {
+        type: "workspace.manifest.nodes",
+        input: { payload: new TextEncoder().encode(JSON.stringify({ root, paths: [] })) },
+      },
+      { value: [], hashes: [], metrics: { contentHashCount: 0, memoHitCount: 0 } },
+    ],
+    worktrees: [{ type: "worktree.directory-size", input: { root } }, 0],
+    worktreeMaintenance: [{ type: "worktree.eviction-repositories", input: { repoRoots: [] } }, []],
+  };
+  const [command, expected] = cases[owner];
   const lifecycle = () =>
     getTrackedWorkerLifecycleSnapshot().workerLifecycle.find(
       (worker) => worker.script === "git-operation.worker.js",
@@ -128,52 +70,39 @@ it.each(idleCases)("preserves the $owner idle policy (floor=$floor)", async (ent
   const exits = (reason: string) =>
     lifecycle()?.retired.find((retirement) => retirement.reason === reason)?.count ?? 0;
   const live = () => {
-    const row = lifecycle();
-    return row
-      ? row.started - row.retired.reduce((sum, retirement) => sum + retirement.count, 0)
-      : 0;
+    const { started = 0, retired = [] } = lifecycle() ?? {};
+    return started - retired.reduce((sum, { count }) => sum + count, 0);
   };
   const before = starts();
-  const idleBefore = exits("idle_timeout");
-  const run = async () => {
-    expect(await runGitWorkerOperation(entry.command(root))).toEqual(entry.expected);
-  };
+  const run = () => expect(runGitWorkerOperation(command)).resolves.toEqual(expected);
   // Existing mock availableParallelism=3 makes reads a two-worker pool.
-  const initialWorkers = entry.owner === "reads" ? 2 : 1;
-  const poll = () => Promise.all(Array.from({ length: initialWorkers }, run));
-
-  expect(live()).toBe(0);
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
-  await poll();
-  expect(starts() - before).toBe(initialWorkers);
-  if (entry.owner === "reads") {
-    for (const pollMs of [45_000, 60_001, 90_000]) {
-      await vi.advanceTimersByTimeAsync(pollMs);
-      await poll();
-      expect(starts() - before).toBe(initialWorkers);
+  const initialWorkers = owner === "reads" ? 2 : 1;
+  // Real Git process cleanup may poll timers while the task is awaited.
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "performance"],
+    shouldAdvanceTime: true,
+  });
+  for (const pollMs of owner === "reads" ? [0, 45_000, 60_001, 90_000] : [0]) {
+    await vi.advanceTimersByTimeAsync(pollMs);
+    await Promise.all(Array.from({ length: initialWorkers }, run));
+    expect(starts() - before).toBe(initialWorkers);
+  }
+  const idleMs = owner === "reads" ? 120_001 : 60_001;
+  for (const [reason, retained, retire] of [
+    ["idle_timeout", Number(floor), () => vi.advanceTimersByTimeAsync(idleMs)],
+    ["memory_pressure", 0, () => channel("openclaw.memory.critical").publish({})],
+  ] as const) {
+    const started = starts(),
+      retired = exits(reason),
+      active = live();
+    await retire();
+    await vi.waitFor(() => expect(exits(reason) - retired).toBe(active - retained));
+    if (reason === "idle_timeout") {
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
     }
-  }
-
-  await vi.advanceTimersByTimeAsync(entry.owner === "reads" ? 120_001 : 60_001);
-  if (!entry.floor) {
-    await vi.waitFor(() => expect(exits("idle_timeout") - idleBefore).toBe(initialWorkers));
-    expect(live()).toBe(0);
-  }
-  await vi.advanceTimersByTimeAsync(10 * 60_000);
-  expect(starts() - before).toBe(initialWorkers); // Retirement never replenishes eagerly.
-  expect(live()).toBe(entry.floor ? 1 : 0);
-  await run();
-  expect(starts() - before).toBe(initialWorkers + Number(!entry.floor));
-
-  if (entry.floor) {
-    const pressureBefore = exits("memory_pressure");
-    const startsBeforePressure = starts();
-    channel("openclaw.memory.critical").publish({});
-    await vi.waitFor(() => expect(exits("memory_pressure") - pressureBefore).toBe(1));
-    expect(live()).toBe(0);
-    expect(starts()).toBe(startsBeforePressure);
+    expect([live(), starts()]).toEqual([retained, started]); // No eager replacements.
     await run();
-    expect(starts()).toBe(startsBeforePressure + 1);
+    expect(starts()).toBe(started + Number(!retained));
   }
   await drainGlobalSingletonLifecycleState();
   expect(live()).toBe(0);
