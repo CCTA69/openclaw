@@ -688,7 +688,11 @@ suite.define(() => {
         expect(await profiles.first().textContent()).toContain("alex@example.invalid");
         expect(await profiles.first().textContent()).toContain("Codex CLI");
         expect(await profiles.last().textContent()).toContain("alex@example.invalid");
-        expect(await profiles.last().textContent()).toContain("Expiring");
+        expect(await profiles.last().textContent()).toContain("Credentials configured");
+        expect(await profiles.last().textContent()).toContain(
+          "Access-token expiry alone does not mean you need to sign in again.",
+        );
+        expect(await profiles.last().textContent()).not.toContain("Expiring");
         const connectionMethod = (label: string) =>
           dialog.getByRole("button").filter({
             has: page.locator("strong").filter({ hasText: label }),
