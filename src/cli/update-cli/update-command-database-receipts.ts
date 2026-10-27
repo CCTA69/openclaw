@@ -7,6 +7,7 @@ import {
 } from "../../infra/update-doctor-scan-receipts.js";
 import type { UpdateStepResult } from "../../infra/update-step-result.js";
 import { isStatePostgres } from "../../state/openclaw-state-db-engine.js";
+import { closeOpenClawStateDatabaseByPathAsync } from "../../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 
 // The installed driver records the first Doctor receipt here. Its existing backup
@@ -28,6 +29,8 @@ export async function observeUpdateParentDatabaseWrites(
   }
   options.assertCurrent?.();
   try {
+    // Close first so Doctor receives the post-close fingerprint and can take native exclusion.
+    await closeOpenClawStateDatabaseByPathAsync(pathname);
     const { readUpdateDatabaseGenerationsIsolated } =
       await import("../../infra/update-candidate-state.js");
     const generations = await readUpdateDatabaseGenerationsIsolated([pathname], options);

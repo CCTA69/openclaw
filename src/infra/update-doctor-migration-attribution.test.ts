@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
@@ -17,10 +18,10 @@ import { createOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-
 import {
   closeOpenClawStateDatabaseAsync,
   openOpenClawStateDatabase,
-  prepareOpenClawStateDatabaseSchema,
   repairOpenClawStateDatabaseIndexesForDoctor,
   repairOpenClawStateDatabaseReadabilityForDoctor,
 } from "../state/openclaw-state-db.js";
+import { spawnNodeEvalSync } from "../test-utils/node-process.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   runUpdateStateInspectionWorker,
@@ -30,7 +31,10 @@ import { readUpdateDatabaseGenerationsIsolated } from "./update-candidate-state.
 import { readUpdateStateDatabaseSizes } from "./update-candidate-state.sizes.js";
 import { UPDATE_RUN_ID_ENV } from "./update-control-plane-sentinel.js";
 import type { UpdateDatabaseBackup } from "./update-database-backup.js";
-import { readUpdateDatabaseGenerations } from "./update-database-generations.js";
+import {
+  readUpdateDatabaseGenerations,
+  type UpdateDatabaseWriteReceipt,
+} from "./update-database-generations.js";
 import * as updateGenerations from "./update-database-generations.js";
 import { recordUpdateModelRetirement } from "./update-deferred-model-retirement.js";
 import {
@@ -372,14 +376,45 @@ it.each(["native", "worker"] as const)(
         } else {
           await recordUpdateRunStepAsync(runId, completion, { env });
         }
-        await closeOpenClawStateDatabaseAsync();
-        await observeUpdateParentDatabaseWrites(backup, { env, root: process.cwd() });
-        const second = await withCapture(env, backup.migration!.to, async () => {
-          expect((await prepareOpenClawStateDatabaseSchema({ env }, "doctor")).warnings).toEqual(
-            [],
-          );
-          recordUpdateModelRetirement("completed", env);
-        });
+        await observeUpdateParentDatabaseWrites(backup, { env });
+        // A separate Doctor process must acquire exclusion while the parent stays alive.
+        const moduleUrl = (file: string) =>
+          JSON.stringify(pathToFileURL(path.resolve("src", file)).href);
+        const child = spawnNodeEvalSync(
+          `
+              import { createUpdateDoctorDatabaseWriteCapture } from ${moduleUrl("infra/update-doctor-result.ts")};
+              import { createOpenClawDatabaseMaintenanceScope } from ${moduleUrl("state/openclaw-state-db-async-lifecycle.ts")};
+              import { prepareOpenClawStateDatabaseSchema, closeOpenClawStateDatabaseAsync } from ${moduleUrl("state/openclaw-state-db.ts")};
+              import { recordUpdateModelRetirement } from ${moduleUrl("infra/update-deferred-model-retirement.ts")};
+              const warnings = [];
+              const capture = createUpdateDoctorDatabaseWriteCapture(${JSON.stringify(backup.migration!.to)}, {
+                env: process.env, signal: new AbortController().signal,
+                warn: message => warnings.push(message),
+              });
+              const scope = createOpenClawDatabaseMaintenanceScope({
+                schemaMaintenance: true, assertOwnerCurrent() {}, assertDatabaseAccess() {},
+              });
+              try {
+                await capture.admit();
+                await scope.run(() => capture.run(async () => {
+                  const result = await prepareOpenClawStateDatabaseSchema({ env: process.env }, "doctor");
+                  warnings.push(...result.warnings);
+                  recordUpdateModelRetirement("completed", process.env);
+                }));
+                await scope.close();
+                await capture.settle();
+                process.stdout.write(JSON.stringify({ receipt: capture.receipt, warnings }));
+              } finally {
+                await scope.close();
+                await closeOpenClawStateDatabaseAsync();
+              }
+          `,
+          { env, imports: [path.resolve("scripts/tsx.mjs")], timeout: 60_000 },
+        );
+        expect(child.status, child.stderr).toBe(0);
+        const second: { receipt: UpdateDatabaseWriteReceipt; warnings: string[] } = JSON.parse(
+          child.stdout,
+        );
         expect(second.receipt).toMatchObject({ unchanged: true });
         recordUpdateDatabaseWrites(backup, second.receipt, { name: "post-plugin doctor" });
         expect(backup.sourceGenerations).toEqual(sourceGenerations);
