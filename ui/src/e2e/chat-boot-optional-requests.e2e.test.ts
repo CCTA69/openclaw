@@ -40,6 +40,7 @@ suite.define(() => {
         };
         const gateway = await installMockGateway(page, {
           sessionKey,
+          deviceToken: null, // Keep the rejection terminal while the login module loads.
           deferredMethods: ["connect"],
           historyMessages: [initialMessage],
         });
