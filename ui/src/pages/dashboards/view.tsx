@@ -95,6 +95,21 @@ function visibleDashboardRows(data: DashboardsRouteData, filters: DashboardGalle
     );
 }
 
+// Native Tab enters at either endpoint, then the neighboring track is ready.
+function pinnedTracks(rowCount: number, columns: number, focusedIndex: number | undefined) {
+  const count = Math.ceil(rowCount / columns);
+  const pinned = new Set([0, count - 1]);
+  if (focusedIndex !== undefined) {
+    const track = Math.floor(focusedIndex / columns);
+    for (const index of [track - 1, track, track + 1]) {
+      if (index >= 0 && index < count) {
+        pinned.add(index);
+      }
+    }
+  }
+  return pinned;
+}
+
 function DashboardGrid(props: {
   data: DashboardsRouteData;
   rows: DashboardRow[];
@@ -282,17 +297,11 @@ function DashboardGrid(props: {
         }
       }
       const count = Math.ceil(next.rows.length / nextColumns);
-      const focusedIndex = next.indexes.get(next.focused ?? "");
-      // Native Tab enters at either endpoint, then the neighboring track is ready.
-      const pinned = new Set([0, count - 1]);
-      if (focusedIndex !== undefined) {
-        const track = Math.floor(focusedIndex / nextColumns);
-        for (const index of [track - 1, track, track + 1]) {
-          if (index >= 0 && index < count) {
-            pinned.add(index);
-          }
-        }
-      }
+      const pinned = pinnedTracks(
+        next.rows.length,
+        nextColumns,
+        next.indexes.get(next.focused ?? ""),
+      );
       return () => {
         scroller = viewport;
         if (columns !== nextColumns) {
@@ -333,9 +342,11 @@ function DashboardGrid(props: {
     if (view().tracks.length === 0) {
       return [...props.rows.slice(0, 12), ...props.rows.slice(-3)];
     }
-    return view().tracks.flatMap((track) =>
-      props.rows.slice(track.index * view().columns, (track.index + 1) * view().columns),
-    );
+    const pinned = pinnedTracks(props.rows.length, view().columns, indexes().get(focused() ?? ""));
+    const trackIndexes = new Set([...view().tracks.map((track) => track.index), ...pinned]);
+    return [...trackIndexes]
+      .toSorted((left, right) => left - right)
+      .flatMap((index) => props.rows.slice(index * view().columns, (index + 1) * view().columns));
   });
   function CardSlot(card: { row: DashboardRow }) {
     let element: HTMLElement;
