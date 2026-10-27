@@ -613,9 +613,10 @@ scene_ready_text() {
   fi
   case "$1" in
     home) printf '%s\n' "Overview" ;;
-    # The screenshot fixture seeds chat history and restores at the live edge,
-    # so wait for the latest reply instead of empty-chat copy.
-    chat) printf '%s\n' "The Android release is close." ;;
+    # Chat restores at the latest reply's diagram; its prose can be offscreen.
+    # Only the successfully rendered image exposes this content description,
+    # not the source text or a loading/error card.
+    chat) printf '%s\n' 'content-desc="Mermaid diagram"' ;;
     settings) printf '%s\n' "Device name and identity" ;;
     voice-wake) printf '%s\n' "Wake listener" ;;
     # Connected fixtures can push Add Gateway below the composed viewport, so
@@ -648,13 +649,6 @@ wait_for_scene_ready() {
         continue
       fi
       if grep -Fq "$marker" "$dump_path"; then
-        # The image description exists only after the native renderer succeeds;
-        # source text or a loading/error card must not qualify as diagram proof.
-        if [[ "$FORM_FACTOR" == "phone" && "$scene" == "chat" ]] &&
-          ! grep -Fq 'content-desc="Mermaid diagram"' "$dump_path"; then
-          sleep 1
-          continue
-        fi
         return
       fi
     fi
