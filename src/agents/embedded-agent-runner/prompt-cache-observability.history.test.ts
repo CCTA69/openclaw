@@ -70,10 +70,6 @@ function history(key: string, messages: Message[]) {
     },
   };
 }
-function historyChange(detail: string) {
-  return [{ code: "historyRewrite", detail }];
-}
-
 describe("prompt cache history fingerprints", () => {
   beforeEach(() => {
     testScope += 1;
@@ -536,9 +532,9 @@ describe("prompt cache history fingerprints", () => {
       }
       const detail = `message 1 (${message.role}) differs from the previous request; history must be append-only; changed fields: ${kind === "string" ? "content" : "content[0].text"}`;
       tracker.assertRewrite(detail, [first, rebuildWrapper ? { ...message } : message]);
-      expect(tracker.complete({ input: 8_000, cacheRead: 0 })?.changes).toEqual(
-        historyChange(detail),
-      );
+      expect(tracker.complete({ input: 8_000, cacheRead: 0 })?.changes).toEqual([
+        { code: "historyRewrite", detail },
+      ]);
     },
   );
 
@@ -680,7 +676,7 @@ describe("prompt cache history fingerprints", () => {
         expect(
           completePromptCacheObservation({ sessionId, usage: { input: 8_000, cacheRead: 0 } })
             ?.changes,
-        ).toEqual(historyChange(detail));
+        ).toEqual([{ code: "historyRewrite", detail }]);
         observe(sessionId, messages);
         expect(warn).toHaveBeenCalledTimes(1);
       });
