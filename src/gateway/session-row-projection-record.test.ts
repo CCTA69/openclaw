@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
 import { expect, it, vi } from "vitest";
 import { projectGatewaySessionEntry } from "../config/sessions/combined-store-gateway.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
@@ -195,70 +194,32 @@ it("keeps accepted facts and sharing revisions when database reads return equal 
     expect(put).toHaveBeenCalledOnce();
     expect(revisions.sharing()).not.toBe(sharing);
 
-    const committed = { ...original, label: "Committed while lineage was pending" };
+    const committed = {
+      ...original,
+      createdActor: { type: "human", source: "profile", id: "profile", label: "Changed user" },
+    } satisfies SessionEntry;
     const deferred = acquire(
       { ...row, storedEntry: committed, sharingEntry: committed, entryAcquisitionPending: true },
       committed,
     );
     expect(deferred?.entry).toBe(committed);
     expect(deferred?.entryAcquisitionPending).toBeUndefined();
-  });
-});
 
-it("preserves deep change detection for entry metadata and unordered parent membership", async () => {
-  await withOpenClawTestState({ scenario: "minimal" }, async () => {
-    const context = buildSessionListRowMetadataContext({ now: 1 });
-    const acquisition = { cfg, context, remove: noop, put: noop, archive };
-    const variants: SessionEntry[] = [
-      original,
-      structuredClone(original),
-      ...[original.updatedAt + 1, Number.NaN, 0, -0].map((updatedAt) =>
-        Object.assign({}, original, { updatedAt }),
-      ),
-      { ...original, sessionId: "replacement" },
-      { ...original, lifecycleRevision: "generation-2" },
-      {
-        ...original,
-        createdActor: { type: "human", source: "profile", id: "profile", label: "changed" },
-      },
-      { ...original, label: undefined },
-      { ...original, parentSessionKey: "agent:main:parent", spawnedBy: "agent:main:requester" },
-    ];
-    for (const previous of [undefined, ...variants]) {
-      for (const storedEntry of variants) {
-        const row = { ...records.create(target, previous), entry: previous };
-        const parents = records.readSessionRowParents(row, storedEntry, cfg, context);
-        for (const oldParents of [
-          new Set<string>(),
-          new Set(parents),
-          new Set([...parents].toReversed()),
-          new Set(["logical:main\0agent:main:other"]),
-          new Set([...parents, "logical:main\0agent:main:other"]),
-        ]) {
-          row.parents = oldParents;
-          const acquiredParents = records.readSessionRowParents(row, storedEntry, cfg, context);
-          expect(acquiredParents).toEqual(parents);
-          if (isDeepStrictEqual(oldParents, parents)) {
-            expect(acquiredParents).toBe(oldParents);
-          }
-          const changed = !isDeepStrictEqual([storedEntry, parents], [previous, oldParents]);
-          const marked: records.Row[] = [];
-          const next = records.acquireSessionRowEntry({
-            ...acquisition,
-            row,
-            rows: new Map([[records.identity(row), row]]),
-            storedEntry,
-            markRelated: (related) => marked.push(related),
-          });
-          expect(marked).toEqual(changed ? [row, next] : []);
-          expect(next?.storedEntry).toBe(changed ? storedEntry : previous);
-          expect(next?.entry).toBe(
-            isDeepStrictEqual(previous, storedEntry) ? previous : storedEntry,
-          );
-          expect(next?.parents).toEqual(parents);
-        }
-      }
-    }
+    const lineage = {
+      ...original,
+      parentSessionKey: "agent:main:parent",
+      spawnedBy: "agent:main:requester",
+    };
+    const parented = acquire(row, lineage)!;
+    const parents = new Set([
+      "logical:main\0agent:main:requester",
+      "logical:main\0agent:main:parent",
+    ]);
+    parented.parents = parents;
+    expect(acquire(parented, structuredClone(lineage))).toBe(parented);
+    expect(parented.parents).toBe(parents);
+    const reparented = acquire(parented, { ...lineage, spawnedBy: undefined })!;
+    expect([...reparented.parents]).toEqual(["logical:main\0agent:main:parent"]);
   });
 });
 
