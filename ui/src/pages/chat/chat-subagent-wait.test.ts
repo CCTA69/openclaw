@@ -3,7 +3,12 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { GatewaySessionRow } from "../../api/types.ts";
 import { mountSolid } from "../../test-helpers/mount-solid.ts";
 import { flush } from "../../test-helpers/solid-settle.ts";
-import { handoffSessionLinks, listSubagents, projectSubagentStatus } from "./chat-subagent-wait.ts";
+import {
+  handoffSessionLinks,
+  listResumedHandoffSessions,
+  listSubagents,
+  projectSubagentStatus,
+} from "./chat-subagent-wait.ts";
 import { UnplacedSubagentWait } from "./components/chat-message-stream-view.tsx";
 import {
   SubagentActivity,
@@ -460,6 +465,53 @@ describe("chat waiting on subagents", () => {
       expect(onOpenSessionLink).toHaveBeenCalledOnce();
     },
   );
+
+  it("names and links no child until the pane's own child query is complete", () => {
+    // Rows seeded from the sidebar can be a partial set: naming one would name
+    // the wrong session, so the wait keeps its unnamed status until hydration.
+    const sibling = { ...child, key: "agent:main:subagent:sibling", label: "Sibling" };
+    const onOpenSessionLink = vi.fn();
+    const handoff = { yieldedAt: 2_000, resumedAt: 3_000 };
+    for (const roster of [
+      { subagentSessions: [child], subagentSessionsHydrated: false },
+      { subagentSessions: [child], subagentSessionsHydrated: true, subagentSessionsPending: true },
+    ]) {
+      const projection = status(roster);
+      expect(projection.wait?.sessions).toEqual([]);
+      expect(listResumedHandoffSessions(parent.key, roster, handoff)).toEqual([]);
+      const container = document.createElement("div");
+      mountWorkingIndicator(
+        container,
+        { kind: "reading-indicator", key: "parent-wait", startedAt: 5_000 },
+        {
+          waitingSubagents: projection.wait!,
+          sessionLinks: handoffSessionLinks({ ...roster, onOpenSessionLink }),
+        },
+      );
+      expect(container.querySelector(".chat-subagent-wait, a")).toBeNull();
+      expect(container.textContent).not.toContain(child.label);
+    }
+    // Once the child query answers, the complete set is named and linked.
+    const complete = { subagentSessions: [child, sibling], subagentSessionsHydrated: true };
+    expect(status(complete).wait?.sessions.map((session) => session.key)).toEqual([
+      child.key,
+      sibling.key,
+    ]);
+    const finished = { hasActiveRun: false, status: "done" as const, endedAt: 2_500 };
+    expect(
+      listResumedHandoffSessions(
+        parent.key,
+        {
+          subagentSessions: [
+            { ...child, ...finished },
+            { ...sibling, ...finished },
+          ],
+          subagentSessionsHydrated: true,
+        },
+        handoff,
+      ).map((session) => session.key),
+    ).toEqual([child.key, sibling.key]);
+  });
 
   it("links child names only to sessions this pane loaded and can open", () => {
     const onOpenSessionLink = vi.fn();

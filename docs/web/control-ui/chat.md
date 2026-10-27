@@ -120,7 +120,8 @@ When everything it waited on has finished, the block stays as it is, without a
 working indicator, until the turn resumes. Its answer then continues in that
 same block, with one footer at the end. Below a spoken acknowledgment, a thin
 **Resumed · 9m 32s later · 3 sessions** rule marks where it picked up again;
-select it to see the children it waited on and their current status. Tool activity that
+select it to see the children it waited on and their current status. Until the
+chat's own subagent list has loaded, the rule shows the wait time alone. Tool activity that
 resumes with nothing written in between joins the activity row from before the
 handoff. In dashboard sessions, tool activity recorded after the resumed
 answer, such as the step that sent it, joins the activity before that answer,

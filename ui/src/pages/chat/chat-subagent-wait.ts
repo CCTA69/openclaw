@@ -142,12 +142,22 @@ export function groupReadsHandoffRoster(group: { messages: readonly { message: u
   return group.messages.some(({ message }) => readHandoffDisplay(message)?.resumedAt !== undefined);
 }
 
-/** The children a resumed handoff waited on, from the pane's own child query. */
+/**
+ * The children a resumed handoff waited on, from the pane's own child query.
+ * Like the waiting line, it names none until that query has answered with no
+ * newer child outstanding: seeded rows can be a partial set.
+ */
 export function listResumedHandoffSessions(
   parentKey: string,
-  roster: Pick<SubagentRoster, "subagentSessions" | "subagentSessionsHydrated">,
+  roster: Pick<
+    SubagentRoster,
+    "subagentSessions" | "subagentSessionsHydrated" | "subagentSessionsPending"
+  >,
   handoff: { yieldedAt: number; resumedAt: number },
 ): ChatHandoffSession[] {
+  if (roster.subagentSessionsPending) {
+    return [];
+  }
   return listHandoffSessions(directChildren({ key: parentKey }, roster), {
     from: handoff.yieldedAt,
     to: handoff.resumedAt,
@@ -335,6 +345,6 @@ export function projectSubagentStatus(
         : [running, listed],
     ),
     // Seeded rows can already match; rows that list children wait for the pane's own query.
-    rowsKey: `${input.subagentSessionsHydrated ? "hydrated" : "seeded"}\n${spawnedSubagentsRenderKey(input.subagentSessions)}`,
+    rowsKey: `${input.subagentSessionsHydrated && !input.subagentSessionsPending ? "complete" : "partial"}\n${spawnedSubagentsRenderKey(input.subagentSessions)}`,
   };
 }

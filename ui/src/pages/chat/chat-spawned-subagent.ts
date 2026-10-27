@@ -24,7 +24,7 @@ export type SubagentRoster = {
 /** What a launch row needs to show its subagent's session and open it. */
 export type SubagentRowContext = Pick<
   SubagentRoster,
-  "subagentSessions" | "subagentParentKey" | "subagentSessionsHydrated"
+  "subagentSessions" | "subagentParentKey" | "subagentSessionsHydrated" | "subagentSessionsPending"
 > & {
   /** Shows a subagent the Subagents panel lists. */
   onOpenSubagent?: (sessionKey: string) => void;
