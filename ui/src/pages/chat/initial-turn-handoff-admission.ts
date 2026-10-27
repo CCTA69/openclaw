@@ -107,6 +107,8 @@ export function admitInitialChatTurn(
     (!run.sessionId || !host.currentSessionId || run.sessionId === host.currentSessionId)
   ) {
     adoptStartedChatRun(host, run.id, run.startedAt);
+    // Run ownership can be new after its user receipt has retired display ownership.
+    return admitted || host.chatRunId === run.id;
   }
   return admitted;
 }

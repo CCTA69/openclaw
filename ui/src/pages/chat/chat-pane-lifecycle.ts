@@ -520,11 +520,16 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionObservation {
           // Admit each accepted initial turn before waking followers parked behind recovery.
           const admitted = admitInitialChatTurn(state, readAcknowledgedInitialRun(state));
           if (!parseCatalogSessionKey(state.sessionKey)) {
-            // A replay ACK may refer to collected input already outside the loaded user rows.
+            // Fresh history settles replayed runs before their queued followers resume.
             if (admitted) {
-              void loadChatHistory(state);
+              void loadChatHistory(state).then(() => {
+                if (this.state === state) {
+                  void resumeStoredChatOutboxes(state);
+                }
+              });
+            } else {
+              void resumeStoredChatOutboxes(state);
             }
-            void resumeStoredChatOutboxes(state);
           }
         }
       }),
