@@ -150,18 +150,13 @@ const bindingMutation: SqliteNativeMutation = {
 };
 
 /** Dispose callbacks may refuse close; native custody expires only after SQLite has closed. */
-export function observeSqliteNativeClose(
-  database: DatabaseSync,
-  onClose: () => void,
-  beforeClose?: () => void,
-): void {
+export function observeSqliteNativeClose(database: DatabaseSync, onClose: () => void): void {
   for (const method of ["close", Symbol.dispose] as const) {
     if (typeof database[method] !== "function") {
       continue;
     }
     const close = database[method].bind(database);
     database[method] = () => {
-      beforeClose?.();
       try {
         close();
       } finally {

@@ -136,57 +136,29 @@ function observeMigrationClose(
   capture: UpdateDoctorMigrationCapture,
   expected: string | null,
   assertCurrent: () => void,
-  verifyBeforeClose = false,
 ) {
   const maintenance = getOpenClawDatabaseMaintenanceScope();
   let closed = false;
-  let admitted = !verifyBeforeClose;
-  observeSqliteNativeClose(
-    db,
-    () => {
-      if (closed || !admitted) {
-        return;
+  observeSqliteNativeClose(db, () => {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    if (capture.expected(pathname) !== expected) {
+      return;
+    }
+    try {
+      if (getOpenClawDatabaseMaintenanceScope() !== maintenance) {
+        throw new Error("SQLite close lost its maintenance scope.");
       }
-      closed = true;
-      if (capture.expected(pathname) !== expected) {
-        return;
-      }
-      try {
-        if (getOpenClawDatabaseMaintenanceScope() !== maintenance) {
-          throw new Error("SQLite close lost its maintenance scope.");
-        }
-        assertCurrent();
-        const after = readSqliteGeneration(pathname);
-        assertCurrent();
-        capture.accept(pathname, expected, after);
-      } catch (error) {
-        capture.refuse(`SQLite native close could not be verified: ${formatErrorMessage(error)}`);
-      }
-    },
-    () => {
-      // Existing schema maintenance includes lease writes before its handles close.
-      if (!verifyBeforeClose) {
-        return;
-      }
-      admitted = false;
-      // A later write on this handle owns its final postimage.
-      if (!db.isOpen || capture.expected(pathname) !== expected) {
-        return;
-      }
-      try {
-        if (getOpenClawDatabaseMaintenanceScope() !== maintenance) {
-          throw new Error("SQLite close lost its maintenance scope.");
-        }
-        assertCurrent();
-        if (readSqliteGeneration(pathname) !== expected) {
-          throw new Error("SQLite changed before native close.");
-        }
-        admitted = true;
-      } catch (error) {
-        capture.refuse(`SQLite native close could not be verified: ${formatErrorMessage(error)}`);
-      }
-    },
-  );
+      assertCurrent();
+      const after = readSqliteGeneration(pathname);
+      assertCurrent();
+      capture.accept(pathname, expected, after);
+    } catch (error) {
+      capture.refuse(`SQLite native close could not be verified: ${formatErrorMessage(error)}`);
+    }
+  });
 }
 
 /** A source proof exists only within its verified migration's lexical interval. */
@@ -228,7 +200,9 @@ export function runUpdateSqliteLedgerWrite<T>(
       assertWriterCurrent();
       capture.assertCurrent();
     },
-    { verifyClose: true },
+    // Both ledger callers own one-shot handles. Retain exclusion through their
+    // immediate close so no writer can intervene before close attribution.
+    { retainExclusive: true },
   );
 }
 
@@ -268,7 +242,7 @@ function runCapturedSqliteWrite<T>(
   operation: () => T,
   capture: UpdateDoctorMigrationCapture,
   assertCurrent: () => void,
-  options?: { retainExclusive?: boolean; created?: boolean; verifyClose?: true },
+  options?: { retainExclusive?: boolean; created?: boolean },
 ): T {
   const expected = capture.expected(pathname);
   if (typeof expected !== "string" && !(expected === null && options?.created)) {
@@ -347,14 +321,7 @@ function runCapturedSqliteWrite<T>(
             const after = readSqliteGeneration(pathname);
             assertCurrent();
             capture.accept(pathname, before, after);
-            observeMigrationClose(
-              db,
-              pathname,
-              capture,
-              after,
-              assertCurrent,
-              options?.verifyClose,
-            );
+            observeMigrationClose(db, pathname, capture, after, assertCurrent);
             return result;
           },
         );
