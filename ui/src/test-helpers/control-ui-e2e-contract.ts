@@ -4,17 +4,6 @@ import type {
   ControlUiSessionFixture,
 } from "./control-ui-session-fixtures.ts";
 
-export type ControlUiMockAccessScenario = {
-  /** Simulate a legacy Gateway whose connect hello predates the auth projection. */
-  omitConnectHelloAuth?: boolean;
-  /** Operator scopes returned by the mocked connect handshake. */
-  operatorScopes?: string[];
-  /** Handshake presentation fact from the authenticated role ceiling, not device scopes. */
-  roleAllowsAdmin?: boolean;
-  /** Role-limited access to other people's sessions, as a configured Gateway role reports it. */
-  operatorSessionCap?: "write" | "suggest" | "view" | "none" | null;
-};
-
 export type ControlUiMockPresenceUser = AuthenticatedUser & {
   self?: boolean;
   deviceFamily?: string;
@@ -42,6 +31,7 @@ export type MockGatewayRequestSelector = {
   match?: Record<string, unknown>;
   exactParams?: boolean;
 };
+type RequestMatch = Omit<MockGatewayRequestSelector, "method">;
 
 type MockSessionsListResponse = { sessions: unknown[]; [field: string]: unknown };
 
@@ -59,7 +49,7 @@ export type MockGatewayControls = {
    * `getRequests(method, match)` count as `after` to wait for the next request. */
   waitForRequest: (
     method: string,
-    options?: { after?: number; match?: Record<string, unknown>; exactParams?: boolean },
+    options?: RequestMatch & { after?: number },
   ) => Promise<MockGatewayRequest>;
 };
 
@@ -82,13 +72,9 @@ type GatewayMethods = {
   rejectDeferred: (
     method: string,
     error?: { code?: string; message?: string; details?: unknown; retryable?: boolean },
-    options?: { match?: Record<string, unknown>; exactParams?: boolean },
+    options?: RequestMatch,
   ) => void;
-  resolveDeferred: (
-    method: string,
-    payload?: unknown,
-    options?: { match?: Record<string, unknown>; exactParams?: boolean },
-  ) => void;
+  resolveDeferred: (method: string, payload?: unknown, options?: RequestMatch) => void;
   suspendLatest: () => void;
   setOnline: (online: boolean) => void;
   setGatewayBootId: (bootId: string) => void;

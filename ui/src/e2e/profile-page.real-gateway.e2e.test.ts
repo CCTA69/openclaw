@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createServer, type ViteDevServer } from "vite";
+import type { ViteDevServer } from "vite";
 import { expect, it } from "vitest";
 import type { GatewayClient } from "../../../src/gateway/client.ts";
 import type { GatewayServer } from "../../../src/gateway/server-public.ts";
@@ -19,7 +19,8 @@ import { waitForControlUiGatewayReady } from "../test-helpers/control-ui-e2e-rea
 import { takeControlUiScreenshotFrame } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import { requireString } from "./chat-flow.test-support.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
-import { deviceGatewayEnv } from "./device-gateway.test-support.ts";
+import { deviceGatewayEnv } from "./device-gateway-env.test-support.ts";
+import { createGatewayProxy, gatewayProxyRoute } from "./gateway-proxy.test-support.ts";
 
 const suite = createControlUiE2eSuite({
   name: "Control UI profile page real Gateway E2E",
@@ -109,37 +110,12 @@ suite.define(() => {
         });
 
         // Chromium does not consistently apply extraHTTPHeaders to WebSocket upgrades.
-        proxy = await createServer({
-          configFile: false,
-          envFile: false,
-          root: state.workspaceDir,
-          appType: "custom",
-          logLevel: "error",
-          server: {
-            host: "127.0.0.1",
-            port: 0,
-            proxy: {
-              "/admin": {
-                target: `http://127.0.0.1:${port}`,
-                ws: true,
-                rewrite: () => "/",
-                headers: {
-                  "x-forwarded-for": "192.0.2.11",
-                  "x-forwarded-proto": "http",
-                  "x-forwarded-user": administrator,
-                },
-              },
-              "/": {
-                target: `http://127.0.0.1:${port}`,
-                ws: true,
-                headers: {
-                  "x-forwarded-for": "192.0.2.10",
-                  "x-forwarded-proto": "http",
-                  "x-forwarded-user": authenticatedUser,
-                },
-              },
-            },
+        proxy = await createGatewayProxy(state.workspaceDir, {
+          "/admin": {
+            ...gatewayProxyRoute(port, administrator, "192.0.2.11"),
+            rewrite: () => "/",
           },
+          "/": gatewayProxyRoute(port, authenticatedUser),
         });
         await proxy.listen();
         const gatewayUrl = new URL(
