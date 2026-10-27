@@ -16,24 +16,24 @@ import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts"
 const suite = createControlUiE2eSuite({ name: "Chat yield acknowledgment" });
 
 const REQUEST =
-  "Let’s start working on this stack. Begin with #184494: review it, check its ClawSweeper feedback, CI and landability, fix any issues, push to the PR and keep monitoring. Use a separate session for each PR.";
+  "Update the docs site dependencies, the CLI dependencies and the CI action pins. Use a separate session for each, and check back when they’re ready to merge.";
 const SHORT_ACK =
-  "Started the #184494 session. I’ll check back when it’s merge-ready or hits a product or security question.";
+  "Started the docs dependency session. I’ll check back when it’s ready to merge or needs a decision from you.";
 const LONG_ACK = [
-  "The #184494 session stopped before changing anything. `github_publish` can’t update Vincent’s PR because it isn’t tied to that session. The managed `roboclaw-bot` identity is fine, though, so I’ve told the session to rebase and push with `--force-with-lease` pinned to the current head. Nothing has been pushed yet.",
-  "Something to know before landing: the same tie-in gap might also block a `github_publish` merge. If it does, I’ll tell you and suggest a different way to merge rather than work around it quietly.",
-  "I also started sessions for #184495 and #184496, and I’ll check back as each reports merge-ready.",
+  "The docs session stopped before changing anything: the lockfile on its branch is out of date, so I’ve told it to rebase onto `main` and regenerate `pnpm-lock.yaml`. Nothing has been pushed yet.",
+  "Something to know before landing: the CLI update raises the minimum Node version. If that needs a release note, I’ll draft one rather than skip it.",
+  "I also started sessions for the CLI and CI updates, and I’ll check back as each one is ready to merge.",
 ].join("\n\n");
 const ANSWER =
-  "#184494 is ready to merge: mergeable, CI green, ClawSweeper clean on `811072c0`. It’s waiting on your approval.";
+  "The docs update is ready to merge: CI is green and the lockfile is regenerated on `7c1e2a9`. It’s waiting on your approval.";
 const PRIVATE = "PRIVATE_CONTINUATION_CONTEXT";
-const FIRST = "Guest stack 1/13 · #184494 invitation-only visibility";
-const SECOND = "Guest stack 2/13 · #184495 listing filters";
-const THIRD = "Guest stack 3/13 · #184496 sidebar labels";
+const FIRST = "Docs site dependencies";
+const SECOND = "CLI dependencies";
+const THIRD = "CI action pins";
 
 type Scenario = "one-waiting" | "three-waiting" | "resumed";
 
-const parentKey = "agent:main:guest-stack";
+const parentKey = "agent:main:dependency-updates";
 const runId = "parent-run";
 
 type ChildFacts = Partial<
@@ -45,8 +45,8 @@ type ChildFacts = Partial<
 
 function child(index: number, label: string, row: ChildFacts, now: number) {
   return {
-    key: `agent:main:subagent:guest-stack-${index}`,
-    sessionId: `guest-stack-${index}`,
+    key: `agent:main:subagent:dependency-update-${index}`,
+    sessionId: `dependency-update-${index}`,
     kind: "direct",
     classification: "subagent",
     label,
@@ -80,7 +80,7 @@ function scenarioData(scenario: Scenario, now: number) {
                 ...done,
                 endedAt: now - 200_000,
                 agentStatus: {
-                  note: "Needs a decision on guest listing visibility",
+                  note: "Needs a decision on the Node minimum",
                   attention: "hand",
                   expiresAt: now + 1_800_000,
                 },
@@ -98,9 +98,9 @@ function scenarioData(scenario: Scenario, now: number) {
   const resumed = scenario === "resumed";
   const parent = {
     key: parentKey,
-    sessionId: "guest-stack",
+    sessionId: "dependency-updates",
     kind: "direct",
-    label: "Guest workspace stack",
+    label: "Dependency updates",
     status: "done",
     hasActiveRun: false,
     activeRunIds: [],
@@ -235,7 +235,7 @@ suite.define(() => {
         .toBe(`Waiting on ${FIRST} · 10m`);
       expect(await wait.locator("button[aria-expanded]").count()).toBe(0);
       expect(await wait.locator("a.chat-subagent-wait__name").getAttribute("href")).toBe(
-        "/chat/main/subagent/guest-stack-1",
+        "/chat/main/subagent/dependency-update-1",
       );
       expect(await thread.textContent()).not.toContain(PRIVATE);
     });
@@ -244,7 +244,7 @@ suite.define(() => {
   it("speaks a long acknowledgment and lists the sessions it waits on", async () => {
     await suite.withPage({ viewport: { width: 1280, height: 900 } }, async ({ page }) => {
       const { pane, thread, prompt } = await openScenario(page, "three-waiting");
-      const lastParagraph = thread.getByText("I also started sessions for #184495", {
+      const lastParagraph = thread.getByText("I also started sessions for the CLI and CI updates", {
         exact: false,
       });
       await lastParagraph.waitFor();
@@ -270,9 +270,9 @@ suite.define(() => {
       expect(
         await rows.locator("a").evaluateAll((links) => links.map((a) => a.getAttribute("href"))),
       ).toEqual([
-        "/chat/main/subagent/guest-stack-2",
-        "/chat/main/subagent/guest-stack-1",
-        "/chat/main/subagent/guest-stack-3",
+        "/chat/main/subagent/dependency-update-2",
+        "/chat/main/subagent/dependency-update-1",
+        "/chat/main/subagent/dependency-update-3",
       ]);
       await toggle.click();
       expect(await toggle.getAttribute("aria-expanded")).toBe("false");
@@ -283,7 +283,7 @@ suite.define(() => {
   it("keeps the acknowledgment after resume and folds the wait into a rule", async () => {
     await suite.withPage({ viewport: { width: 1280, height: 900 } }, async ({ page }) => {
       const { pane, thread, prompt } = await openScenario(page, "resumed");
-      const answer = thread.getByText("is ready to merge", { exact: false });
+      const answer = thread.getByText("The docs update is ready to merge", { exact: false });
       await answer.waitFor();
       const rule = thread.locator(".chat-handoff-resume");
       const toggle = rule.locator("button[aria-expanded]");
@@ -311,7 +311,7 @@ suite.define(() => {
       await rule.locator("li a", { hasText: SECOND }).click();
       await expect
         .poll(() => new URL(page.url()).pathname)
-        .toBe("/chat/main/subagent/guest-stack-2");
+        .toBe("/chat/main/subagent/dependency-update-2");
       await expect
         .poll(() => pane.locator(".chat-pane__session-title-text").first().textContent())
         .toBe(SECOND);
