@@ -129,7 +129,7 @@ describe("Control UI theme contrast", () => {
   );
   const bubblePaints = (theme: string, tokens: TokenMap) => {
     const light = theme === "light" || theme.endsWith("-light");
-    const page = resolveOpaqueColor("var(--bg)", tokens);
+    const page = resolveOpaqueColor("var(--bg-content)", tokens);
     const lightRoot = ':where(:root[data-theme-mode="light"]) ';
     const lightUser = lightRoot + ".chat-group.user .chat-bubble";
     const sender =
@@ -138,10 +138,15 @@ describe("Control UI theme contrast", () => {
       readPaint(readRule(groupedRules, selector), property);
     const background = (selector: string, palette = tokens) =>
       composite(resolveColor(paint(selector), palette), page);
-    const tinted = (selector: string) => {
-      const value = paint(selector);
+    const tinted = (selector: string, property = "--chat-bubble-background") => {
+      const rule = readRule(groupedRules, selector);
+      const value = readPaint(rule, property);
+      const palette = new Map([...tokens, ...rule]);
       return Array.from({ length: 360 }, (_, hue) =>
-        composite(resolveColor(value, new Map(tokens).set("--chat-sender-hue", String(hue))), page),
+        composite(
+          resolveColor(value, new Map(palette).set("--chat-sender-hue", String(hue))),
+          page,
+        ),
       );
     };
     return {
@@ -152,7 +157,17 @@ describe("Control UI theme contrast", () => {
       sender: tinted(
         light ? lightRoot + ".chat-group.user.chat-group--sender-tint .chat-bubble" : sender,
       ),
-      forwarded: () => tinted(sender),
+      senderNames: tinted(
+        (light ? ':root[data-theme-mode="light"] ' : "") +
+          ".chat-group.user.chat-group--sender-tint .chat-sender-name",
+        "--chat-sender-name-color",
+      ),
+      forwarded: () =>
+        tinted(
+          light
+            ? lightRoot + ".chat-group--forwarded.chat-group--sender-tint .chat-bubble"
+            : sender,
+        ),
     };
   };
 
@@ -310,7 +325,7 @@ describe("Control UI theme contrast", () => {
     }
   });
 
-  it("keeps chat links at WCAG AA on every bubble surface", () => {
+  it("keeps chat text and links at WCAG AA on every bubble surface", () => {
     const link = readColorToken(readPaint(readRule(textRules, ".chat-text :where(a)"), "color"));
     const linkTokens = {
       link,
@@ -319,11 +334,32 @@ describe("Control UI theme contrast", () => {
         link,
     };
     for (const [themeName, tokens] of themes) {
-      const { light, user, sender, lightUserText } = bubblePaints(themeName, tokens);
+      const { page, light, user, sender, senderNames, forwarded, lightUserText } = bubblePaints(
+        themeName,
+        tokens,
+      );
+      const identitySurfaces = [...sender, ...forwarded()];
+      expectFloor(
+        Math.min(...senderNames.map((ink) => contrastRatio(ink, page))),
+        AA_NORMAL_TEXT_MIN,
+        `${themeName}: sender names on canvas`,
+      );
 
       if (light) {
         const foreground = resolveOpaqueColor(lightUserText, tokens);
         expectFloor(contrastRatio(foreground, user), AA_NORMAL_TEXT_MIN, `${themeName}: user text`);
+      }
+
+      for (const [role, surfaces, ink] of [
+        ["user", sender, light ? lightUserText : "var(--chat-text)"],
+        ["forwarded", forwarded(), "var(--chat-text)"],
+      ] as const) {
+        const body = resolveOpaqueColor(ink, tokens);
+        expectFloor(
+          Math.min(...surfaces.map((surface) => contrastRatio(body, surface))),
+          AA_NORMAL_TEXT_MIN,
+          `${themeName}: body text on ${role} tints`,
+        );
       }
 
       for (const [state, token] of [
@@ -335,7 +371,7 @@ describe("Control UI theme contrast", () => {
           contrastRatio(composite(foreground, background), background);
         expectFloor(ratioOn(user), AA_NORMAL_TEXT_MIN, `${themeName}: ${state} on user bubble`);
         expectFloor(
-          Math.min(...sender.map(ratioOn)),
+          Math.min(...identitySurfaces.map(ratioOn)),
           AA_NORMAL_TEXT_MIN,
           `${themeName}: ${state} on sender tints`,
         );

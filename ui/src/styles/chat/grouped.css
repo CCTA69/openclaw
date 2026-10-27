@@ -1482,13 +1482,12 @@ button.chat-reply-attribution__target:disabled {
   box-shadow: none;
 }
 
-/* Sender bubble tint: --chat-sender-hue is the user or source session's stable
-   identity hue (same seed as avatar initials). Only hue varies; saturation/
-   lightness/alpha are fixed per theme mode so bubble text keeps contrast for
-   every hue. Order contract: stays below the light-mode reset above — the
-   dark rule outranks it by specificity, so light mode needs its own skin. */
+/* Sender identity keeps its hue while the tint is composed on the theme's
+   canvas. Light mode's former 94% lightness was this same 12% tint over white;
+   mixing the actual canvas avoids a detached pastel on colored themes. */
 .chat-group:is(.user, .chat-group--forwarded).chat-group--sender-tint .chat-bubble {
-  --chat-bubble-background: hsl(var(--chat-sender-hue) 48% 42% / 0.16);
+  --chat-sender-color: hsl(var(--chat-sender-hue) 48% 42%);
+  --chat-bubble-background: color-mix(in srgb, var(--chat-sender-color) 16%, var(--bg-content));
   background: var(--chat-bubble-background);
 
   :where(.shell[data-background-managed]) & {
@@ -1506,8 +1505,10 @@ button.chat-reply-attribution__target:disabled {
   --chat-sender-name-color: hsl(var(--chat-sender-hue) 45% 70%);
 }
 
-:where(:root[data-theme-mode="light"]) .chat-group.user.chat-group--sender-tint .chat-bubble {
-  --chat-bubble-background: hsl(var(--chat-sender-hue) 65% 94%);
+:where(:root[data-theme-mode="light"]) .chat-group.user.chat-group--sender-tint .chat-bubble,
+:where(:root[data-theme-mode="light"]) .chat-group--forwarded.chat-group--sender-tint .chat-bubble {
+  --chat-sender-color: hsl(var(--chat-sender-hue) 65% 50%);
+  --chat-bubble-background: color-mix(in srgb, var(--chat-sender-color) 12%, var(--bg-content));
 }
 
 /* Keep tinted user turns borderless when the generic light hover skin applies. */
@@ -1517,7 +1518,10 @@ button.chat-reply-attribution__target:disabled {
 }
 
 :root[data-theme-mode="light"] .chat-group.user.chat-group--sender-tint .chat-sender-name {
-  --chat-sender-name-color: hsl(var(--chat-sender-hue) 60% 36%);
+  /* The name sits on the canvas, so yellow/green identity ink needs the
+     theme's darker text mixed in to retain readable contrast. */
+  --chat-sender-name-tint: hsl(var(--chat-sender-hue) 60% 36%);
+  --chat-sender-name-color: color-mix(in srgb, var(--chat-sender-name-tint) 50%, var(--text));
 }
 
 /* Ephemeral drafts share sent-turn geometry, typography, and identity tint. */
