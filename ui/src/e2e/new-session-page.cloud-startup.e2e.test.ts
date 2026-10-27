@@ -105,7 +105,9 @@ suite.define(() => {
           )
           .toBeNull();
         const working = page.locator(".chat-working-indicator");
-        await expect.poll(() => working.textContent()).toContain("Waiting for turn to start");
+        await expect
+          .poll(() => working.textContent())
+          .toContain(firstMessage === "optimistic" ? "Waiting for turn to start" : "Working");
         await expect
           .poll(() =>
             evaluateControlUiContext(
@@ -127,7 +129,9 @@ suite.define(() => {
           phase: "preparing_context",
           seq: 1,
         });
-        await expect.poll(() => working.textContent()).toContain("Preparing this turn");
+        await expect
+          .poll(() => working.textContent())
+          .toContain(firstMessage === "optimistic" ? "Preparing this turn" : "Working");
         await gateway.emitGatewayEvent("chat", {
           sessionKey,
           runId,
