@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { recordUpdateDatabaseWrites } from "../cli/update-cli/update-command-database-receipts.js";
 import { withAgentDatabaseMaintenanceLease } from "../state/openclaw-agent-db-maintenance-lease.js";
 import { createOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-db-async-lifecycle.js";
 import {
@@ -22,8 +23,11 @@ import {
 } from "./update-candidate-state.inspection.js";
 import { readUpdateDatabaseGenerationsIsolated } from "./update-candidate-state.js";
 import { readUpdateStateDatabaseSizes } from "./update-candidate-state.sizes.js";
+import { UPDATE_RUN_ID_ENV } from "./update-control-plane-sentinel.js";
+import type { UpdateDatabaseBackup } from "./update-database-backup.js";
 import { readUpdateDatabaseGenerations } from "./update-database-generations.js";
 import * as updateGenerations from "./update-database-generations.js";
+import { recordUpdateModelRetirement } from "./update-deferred-model-retirement.js";
 import {
   getDoctorMigrationBackup,
   getUpdateDoctorMigrationSource,
@@ -34,7 +38,8 @@ import {
 } from "./update-doctor-migration-attribution.js";
 import { createUpdateDoctorDatabaseWriteCapture } from "./update-doctor-result.js";
 import { readUpdateRunDriver } from "./update-run-driver.js";
-import { createUpdateRun } from "./update-run-ledger.js";
+import { createUpdateRun, getUpdateRun, recordUpdateRunStep } from "./update-run-ledger.js";
+import { recordUpdateRunStepAsync } from "./update-run-write.async.js";
 
 const directories = useAutoCleanupTempDirTracker(afterEach);
 afterEach(() => vi.restoreAllMocks());
@@ -288,6 +293,62 @@ async function withCapture(
     await scope.close();
   }
 }
+
+it.each(["native", "worker"] as const)(
+  "completes deferred retirement after the %s parent records Doctor completion",
+  async (parent) => {
+    const { root, pathname, env } = fixture(path.join("state", "openclaw.sqlite"));
+    const { runId } = createUpdateRun({ trigger: "cli" }, { env });
+    Object.assign(env, { [UPDATE_RUN_ID_ENV]: runId });
+    await closeOpenClawStateDatabaseAsync();
+    const sourceGenerations = readUpdateDatabaseGenerations([pathname]);
+    const backup: UpdateDatabaseBackup = {
+      directory: root,
+      databases: [],
+      missingPaths: [],
+      sourcePaths: [pathname],
+      sourceGenerations: { ...sourceGenerations },
+      warnings: [],
+    };
+    const first = await withCapture(env, sourceGenerations, async () => {
+      recordUpdateModelRetirement("deferred", env);
+    });
+    expect(first.warnings).toEqual([]);
+    expect(first.receipt).toMatchObject({ unchanged: true, fromGenerations: sourceGenerations });
+    recordUpdateDatabaseWrites(backup, first.receipt, { name: "pre-plugin doctor" });
+
+    const completion = {
+      step: "pre-plugin doctor",
+      status: "completed" as const,
+      endedAtMs: Date.now(),
+    };
+    if (parent === "native") {
+      recordUpdateRunStep(runId, completion, { env });
+    } else {
+      await recordUpdateRunStepAsync(runId, completion, { env });
+    }
+    await closeOpenClawStateDatabaseAsync();
+    const second = await withCapture(env, backup.migration!.to, async () => {
+      expect((await prepareOpenClawStateDatabaseSchema({ env }, "doctor")).warnings).toEqual([]);
+      recordUpdateModelRetirement("completed", env);
+    });
+    expect(second.warnings).toEqual([]);
+    expect(second.receipt).toMatchObject({ unchanged: true });
+    recordUpdateDatabaseWrites(backup, second.receipt, { name: "post-plugin doctor" });
+    expect(backup.restoreRefusal).toBeUndefined();
+    expect(backup.sourceGenerations).toEqual(sourceGenerations);
+    try {
+      expect(getUpdateRun(runId, { env })?.steps).toContainEqual(
+        expect.objectContaining({
+          step: "finalize:doctor:model-retirement",
+          status: "completed",
+        }),
+      );
+    } finally {
+      await closeOpenClawStateDatabaseAsync();
+    }
+  },
+);
 
 it.each(["lease", "outside"] as const)(
   "settles prior %s writers before acquiring schema repair custody",
