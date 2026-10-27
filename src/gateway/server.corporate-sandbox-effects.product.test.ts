@@ -46,6 +46,7 @@ it.skipIf(!enabled)(
     const state = await createOpenClawTestState(kernelGatewayTestStateOptions("corporate-effects"));
     cleanup.defer(() => state.cleanup());
     const sessionKey = `agent:main:corporate-effects-${randomUUID()}`;
+    const sandboxPrefix = `oc-corp-${randomUUID().slice(0, 12)}-`;
     // The host sentinels are siblings of, never inside, the mounted workspace.
     const sentinel = await state.writeText("host-only/sentinel.txt", randomUUID());
     const originalSentinel = await fs.readFile(sentinel, "utf8");
@@ -60,7 +61,7 @@ it.skipIf(!enabled)(
         processMarker,
         signaled,
       ],
-      { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+      { stdio: ["ignore", "ignore", "ignore", "ipc"], env: {} },
     );
     cleanup.defer(async () => {
       if (hostProcess.exitCode === null && hostProcess.signalCode === null) {
@@ -190,6 +191,7 @@ it.skipIf(!enabled)(
           workspace: state.workspaceDir,
           skipBootstrap: true,
           utilityModel: "",
+          sandbox: { docker: { containerPrefix: sandboxPrefix } },
           model: { primary: model.modelRef },
           models: {
             [model.modelRef]: {
@@ -209,9 +211,10 @@ it.skipIf(!enabled)(
       skills: { load: { watch: false } },
       tools: { allow: ["read", "write", "exec"], codeMode: { enabled: false }, toolSearch: false },
     } satisfies OpenClawConfig;
-    // Cleanup selects only this test's exact sandbox label, including failed setup.
+    // Scope labels include workspace identity; this unique name prefix remains
+    // fixture-owned even when setup fails before registry publication.
     cleanup.defer(async () => {
-      const ids = await docker("ps", "-aq", "--filter", `label=openclaw.sessionKey=${sessionKey}`);
+      const ids = await docker("ps", "-aq", "--filter", `name=${sandboxPrefix}`);
       if (ids) {
         await docker("rm", "-f", ...ids.split(/\s+/));
       }
@@ -241,9 +244,10 @@ it.skipIf(!enabled)(
     expect(await fs.readFile(path.join(state.workspaceDir, "allowed.txt"), "utf8")).toBe(
       workspaceToken,
     );
-    expect(
-      JSON.parse(await fs.readFile(path.join(state.workspaceDir, "effects.json"), "utf8")),
-    ).toEqual({
+    const effects: unknown = JSON.parse(
+      await fs.readFile(path.join(state.workspaceDir, "effects.json"), "utf8"),
+    );
+    expect(effects).toEqual({
       host_reads: [false, false],
       host_writes: [false, false],
       host_processes: [],
@@ -267,7 +271,8 @@ it.skipIf(!enabled)(
       "Corporate synthetic effect acceptance complete.",
     );
     // Supplemental backend evidence, not a substitute for the effects above.
-    const ids = await docker("ps", "-q", "--filter", `label=openclaw.sessionKey=${sessionKey}`);
+    const ids = await docker("ps", "-q", "--filter", `name=${sandboxPrefix}`);
+    expect(ids).not.toBe("");
     expect(ids.split(/\s+/)).toHaveLength(1);
     const containers = JSON.parse(await docker("inspect", ids)) as Array<{
       HostConfig: {
@@ -278,12 +283,29 @@ it.skipIf(!enabled)(
         SecurityOpt: string[];
       };
     }>;
-    expect(containers[0]?.HostConfig).toMatchObject({
+    const policy = containers[0]?.HostConfig;
+    expect(policy).toMatchObject({
       NetworkMode: "none",
       ReadonlyRootfs: true,
       Init: true,
       CapDrop: ["ALL"],
       SecurityOpt: expect.arrayContaining(["no-new-privileges"]),
     });
+    console.info(
+      "[corporate-effect-proof] " +
+        JSON.stringify({
+          workspaceToolRead: outputs[1]?.includes(workspaceToken),
+          sandboxProcess: outputs[3]?.includes("CORPORATE_PROCESS_COMPLETED"),
+          effects,
+          hostHttpHits,
+          container: {
+            network: policy?.NetworkMode,
+            readOnlyRoot: policy?.ReadonlyRootfs,
+            init: policy?.Init,
+            capDrop: policy?.CapDrop,
+            securityOpt: policy?.SecurityOpt,
+          },
+        }),
+    );
   },
 );
