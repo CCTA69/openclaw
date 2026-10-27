@@ -11,6 +11,7 @@ describe("queue configuration", () => {
     { debounceMsByChannel: { x: 1.5 } },
     { allowCollaborativeSteering: "false" },
     { allowCollaborativeSteering: null },
+    { collaborativeSteeringFallback: "allow" },
   ])("rejects invalid plugin-channel queue values: %j", (queue) => {
     expect(validateConfigObject({ messages: { queue } }).ok).toBe(false);
   });
@@ -19,6 +20,14 @@ describe("queue configuration", () => {
     const queue = { allowCollaborativeSteering: value };
     const result = validateConfigObject({ messages: { queue } });
     expect(result).toMatchObject({ ok: true, config: { messages: { queue } } });
+  });
+
+  it.each(["queue", "reject"] as const)("preserves collaborative fallback %s", (value) => {
+    const queue = { collaborativeSteeringFallback: value };
+    expect(validateConfigObject({ messages: { queue } })).toMatchObject({
+      ok: true,
+      config: { messages: { queue } },
+    });
   });
 
   it("validates queue channel keys against plugin metadata without rejecting unknown keys", () => {
