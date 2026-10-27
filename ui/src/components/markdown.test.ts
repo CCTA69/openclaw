@@ -195,6 +195,26 @@ describe("toSanitizedMarkdownHtml", () => {
       '<p><a href="/channels">channels</a> <a href="/automation">automation</a> <a href="/skills/workshop">workshop</a> <a href="/chat">chat</a> <a href="/control/chat/main">baseChat</a> <a href="/control/sessions">baseSessions</a> <a href="/healthz" rel="noreferrer noopener" target="_blank">health</a> <a href="/googlechat" rel="noreferrer noopener" target="_blank">pluginDynamic</a> <a href="/api/files/1" rel="noreferrer noopener" target="_blank">asset</a> <a href="/control/api/files/1" rel="noreferrer noopener" target="_blank">baseApi</a> <a href="/control/avatar/main" rel="noreferrer noopener" target="_blank">baseAvatar</a> <a href="/plugins/diffs/view/id/token" rel="noreferrer noopener" target="_blank">plugin</a> <a href="/control/plugins/diffs/view/id/token" rel="noreferrer noopener" target="_blank">basePlugin</a> <a href="/__openclaw__/canvas/documents/x/index.html" rel="noreferrer noopener" target="_blank">artifact</a> <a href="/control/__openclaw__/canvas/x" rel="noreferrer noopener" target="_blank">baseArtifact</a></p>\n',
     );
   });
+  it("keeps readable plugin links internal while preserving nested plugin docs", () => {
+    const fragment = withControlUiBasePath("/control", () =>
+      render(
+        "[catalog](/plugins/openclaw/linear) [mounted](/control/plugins/openclaw/linear) [migration](/plugins/sdk-migration/how-to-migrate?tab=setup#config) [reference](/plugins/reference/diffs)",
+      ),
+    );
+    const links = [...fragment.querySelectorAll("a")];
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/plugins/openclaw/linear",
+      "/control/plugins/openclaw/linear",
+      "https://docs.openclaw.ai/plugins/sdk-migration/how-to-migrate?tab=setup#config",
+      "https://docs.openclaw.ai/plugins/reference/diffs",
+    ]);
+    expect(links.map((link) => link.getAttribute("target"))).toEqual([
+      null,
+      null,
+      "_blank",
+      "_blank",
+    ]);
+  });
   it.each(["emphasis", "brackets"])(
     "renders deeply nested %s without dropping text (#36213)",
     (kind) => {
