@@ -196,6 +196,12 @@ suite.define(() => {
     expect(await reloadedPanel.locator('[data-attention-kind="scopeUpgrade"]').count()).toBe(0);
     await captureProof(desktop, "desktop-inbox-limited-access-dismissed-reload.png", reloadedPanel);
 
+    await closeInbox(desktop);
+    await desktop.goto(`${suite.server.baseUrl}settings/profile`);
+    const profileAccess = desktop.locator("#settings-profile-access");
+    await profileAccess.getByRole("button", { name: "Request admin", exact: true }).waitFor();
+    expect(await gateway.getRequests("device.scopes.requestUpgrade")).toHaveLength(0);
+
     const mobileContext = await createContext({ width: 390, height: 844 });
     const mobile = await mobileContext.newPage();
     await installMockGateway(mobile, { operatorScopes: LIMITED_SCOPES });

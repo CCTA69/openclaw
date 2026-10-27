@@ -4,6 +4,17 @@ import type {
   ControlUiSessionFixture,
 } from "./control-ui-session-fixtures.ts";
 
+export type ControlUiMockAccessScenario = {
+  /** Simulate a legacy Gateway whose connect hello predates the auth projection. */
+  omitConnectHelloAuth?: boolean;
+  /** Operator scopes returned by the mocked connect handshake. */
+  operatorScopes?: string[];
+  /** Handshake presentation fact from the authenticated role ceiling, not device scopes. */
+  roleAllowsAdmin?: boolean;
+  /** Role-limited access to other people's sessions, as a configured Gateway role reports it. */
+  operatorSessionCap?: "write" | "suggest" | "view" | "none" | null;
+};
+
 export type ControlUiMockPresenceUser = AuthenticatedUser & {
   self?: boolean;
   deviceFamily?: string;

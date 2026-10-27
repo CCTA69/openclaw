@@ -35,6 +35,7 @@ import {
   type ControlUiE2eBuildOptions,
 } from "./control-ui-e2e-build-publication.ts";
 import type {
+  ControlUiMockAccessScenario,
   ControlUiMockGateway,
   ControlUiMockPresenceUser,
   ControlUiMockRequestHandler,
@@ -193,7 +194,7 @@ const json5BrowserSource = readFileSync(require.resolve("json5/dist/index.min.js
 export { installControlUiMockBootstrapDocument } from "./control-ui-bootstrap-fixture.ts";
 export { defaultControlUiFeatureMethods } from "./control-ui-e2e-defaults.ts";
 
-export type ControlUiMockGatewayScenario = {
+export type ControlUiMockGatewayScenario = ControlUiMockAccessScenario & {
   bootstrapPreferences?: ControlUiBootstrapConfig["preferences"];
   /** Auto-wait for sidebar rosters unless startup is held or connect fails; true overrides those skips, false disables the wait. */
   awaitInitialRoster?: boolean;
@@ -295,14 +296,6 @@ export type ControlUiMockGatewayScenario = {
   /** Partition sessions.list fixtures by archived state after applying patches. */
   sessionArchiveFiltering?: boolean;
   models?: ModelCatalogEntry[];
-  /** Simulate a legacy Gateway whose connect hello predates the auth projection. */
-  omitConnectHelloAuth?: boolean;
-  /** Operator scopes returned by the mocked connect handshake. */
-  operatorScopes?: string[];
-  /** Handshake presentation fact from the authenticated role ceiling, not device scopes. */
-  roleAllowsAdmin?: boolean;
-  /** Role-limited access to other people's sessions, as a configured Gateway role reports it. */
-  operatorSessionCap?: "write" | "suggest" | "view" | "none" | null;
   /** Selected fixture and event default; use controlUiSessionUrl to select it in the UI. */
   sessionKey?: string;
   sessionScope?: AgentsListResult["scope"];
