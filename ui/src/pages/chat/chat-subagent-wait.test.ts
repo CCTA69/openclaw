@@ -209,6 +209,7 @@ describe("chat waiting on subagents", () => {
         startedAt: 2_000,
         runId: "parent-run",
         runningCount: 1,
+        sessions: [{ key: child.key, label: "Backend implementation", status: "running" }],
       });
     }
   });
@@ -217,7 +218,12 @@ describe("chat waiting on subagents", () => {
     const derive = (childRows?: GatewaySessionRow[]) =>
       status({ subagentSessions: childRows, subagentSessionsHydrated: childRows !== undefined })
         .wait;
-    expect(derive()).toEqual({ startedAt: 2_000, runId: "parent-run", runningCount: 0 });
+    expect(derive()).toEqual({
+      startedAt: 2_000,
+      runId: "parent-run",
+      runningCount: 0,
+      sessions: [],
+    });
     const summarize = (childRows: GatewaySessionRow[]) => {
       const wait = derive(childRows);
       return wait?.runningCount;
@@ -241,7 +247,7 @@ describe("chat waiting on subagents", () => {
     expect(status({ subagentSessions: [child, yielded] }).wait).toMatchObject({ runningCount: 2 });
   });
 
-  it("counts child sessions that are not subagents without naming them", () => {
+  it("counts child sessions that are not subagents apart and names them on the wait", () => {
     const session = { ...child, key: "agent:main:dashboard:opened", label: "Opened session" };
     const derive = (rows: GatewaySessionRow[]) => status({ subagentSessions: rows }).wait;
     expect(derive([session])).toEqual({
@@ -249,6 +255,7 @@ describe("chat waiting on subagents", () => {
       runId: "parent-run",
       runningCount: 0,
       sessionCount: 1,
+      sessions: [{ key: session.key, label: "Opened session", status: "running" }],
     });
     const acp = { ...child, key: "agent:main:acp:coder", label: "Coder" };
     expect(derive([acp])).toMatchObject({ runningCount: 1 });
@@ -260,7 +267,12 @@ describe("chat waiting on subagents", () => {
 
   it("counts children only once the pane's own child query has answered", () => {
     const derive = (subagentSessionsHydrated: boolean) => status({ subagentSessionsHydrated }).wait;
-    expect(derive(false)).toEqual({ startedAt: 2_000, runId: "parent-run", runningCount: 0 });
+    expect(derive(false)).toEqual({
+      startedAt: 2_000,
+      runId: "parent-run",
+      runningCount: 0,
+      sessions: [],
+    });
     expect(derive(true)).toMatchObject({ runningCount: 1 });
   });
 
@@ -289,6 +301,7 @@ describe("chat waiting on subagents", () => {
         startedAt: 4_000,
         runningCount: 0,
         sessionCount: 1,
+        sessions: [{ key: dashboardChild.key, label: "Backend implementation", status: "running" }],
       });
       expect(projection.placedWait).toBeUndefined();
     }
@@ -377,6 +390,7 @@ describe("chat waiting on subagents", () => {
       startedAt: 2_000,
       runId: "parent-run",
       runningCount: 0,
+      sessions: [],
     });
   });
 
@@ -402,7 +416,7 @@ describe("chat waiting on subagents", () => {
   });
 
   it.each([false, true])(
-    "keeps idle waits quiet and the footer count navigable (bubble mode: %s)",
+    "names the one session a wait is on in place of the working text (bubble mode: %s)",
     (bubbleMode) => {
       const now = 66_500;
       vi.spyOn(Date, "now").mockReturnValue(now);
@@ -411,7 +425,11 @@ describe("chat waiting on subagents", () => {
       });
       const container = document.createElement("div");
       const onOpenSubagents = vi.fn();
-      const wait = { startedAt: 1_500, runningCount: 1 };
+      const wait = {
+        startedAt: 1_500,
+        runningCount: 1,
+        sessions: [{ key: child.key, label: "Backend implementation", status: "running" as const }],
+      };
       mountWorkingIndicator(
         container,
         { kind: "reading-indicator", key: "parent-wait", startedAt: 5_000 },
@@ -430,17 +448,88 @@ describe("chat waiting on subagents", () => {
       expect(
         container.querySelector("openclaw-working-phrase, details, .chat-subagent-activity"),
       ).toBeNull();
-      expect(container.textContent).not.toContain("Backend implementation");
-      expect(container.textContent).toContain("4.7k output tokens");
-      expect(container.querySelector("openclaw-elapsed-time")?.textContent).toBe("1m 5s");
-      const count = container.querySelector<HTMLButtonElement>(
-        ".chat-working-indicator__subagents",
+      const line = container.querySelector(".chat-subagent-wait");
+      expect(line?.textContent?.replace(/\s+/gu, " ").trim()).toBe(
+        "Waiting on Backend implementation · 1m 5s",
       );
-      expect(count?.textContent).toBe("1 subagent running");
-      count?.click();
+      expect(container.querySelector(".chat-working-indicator__subagents")).toBeNull();
+      expect(line?.querySelector("[aria-expanded]")).toBeNull();
+      const name = line?.querySelector<HTMLButtonElement>("button.chat-subagent-wait__name");
+      name?.click();
       expect(onOpenSubagents).toHaveBeenCalledOnce();
     },
   );
+
+  it("lists several sessions with statuses in words, attention first, open until closed", () => {
+    const now = 66_500;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const rows: GatewaySessionRow[] = [
+      { ...child, createdAt: 10 },
+      {
+        ...child,
+        key: "agent:main:subagent:review",
+        label: "Review",
+        createdAt: 20,
+        hasActiveRun: false,
+        status: "done",
+        endedAt: 3_000,
+        agentStatus: { note: "Pick a merge method", attention: "hand", expiresAt: now + 60_000 },
+      },
+      {
+        ...child,
+        key: "agent:main:dashboard:docs",
+        label: "Docs",
+        createdAt: 30,
+        hasActiveRun: false,
+        status: "done",
+        endedAt: 4_000,
+      },
+      // Finished before this handoff: not what it waits on.
+      {
+        ...child,
+        key: "agent:main:subagent:earlier",
+        label: "Earlier",
+        hasActiveRun: false,
+        status: "done",
+        endedAt: 1_500,
+      },
+    ];
+    const wait = status({ subagentSessions: rows }).wait;
+    expect(wait?.sessions).toEqual([
+      {
+        key: "agent:main:subagent:review",
+        label: "Review",
+        status: "attention",
+        note: "Pick a merge method",
+      },
+      { key: child.key, label: "Backend implementation", status: "running" },
+      { key: "agent:main:dashboard:docs", label: "Docs", status: "done" },
+    ]);
+    const container = document.createElement("div");
+    mountWorkingIndicator(
+      container,
+      { kind: "reading-indicator", key: "parent-wait", startedAt: 5_000 },
+      { waitingSubagents: { ...wait!, startedAt: 1_500 } },
+    );
+    const toggle = container.querySelector<HTMLButtonElement>(".chat-subagent-wait__toggle");
+    expect(toggle?.textContent?.replace(/\s+/gu, " ").trim()).toBe(
+      "Waiting on 3 sessions · 1 needs your input · 1m 5s",
+    );
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    const list = container.querySelector(`#${toggle?.getAttribute("aria-controls")}`);
+    expect(
+      [...(list?.querySelectorAll("li") ?? [])].map((row) =>
+        row.textContent?.replace(/\s+/gu, " ").trim(),
+      ),
+    ).toEqual(["Review Needs your input", "Backend implementation Running", "Docs Done"]);
+    toggle?.click();
+    flush();
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector("li")).toBeNull();
+  });
 
   it("makes the running count the way to the list when navigation is available", () => {
     const container = document.createElement("div");
