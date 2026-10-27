@@ -527,6 +527,10 @@ describe("ModelProvidersPage agent scope", () => {
     expect(modal.textContent).toContain("Remove OpenAI");
     expect(requestCount(request, "models.authLogout")).toBe(0);
     modal.querySelector<HTMLButtonElement>("button.danger")!.click();
+    await waitForSolid(() =>
+      expect(toast.toast?.message).toContain("Authentication refresh failed."),
+    );
+    await vi.dynamicImportSettled();
     await waitForSolid(() => expect(toast.textContent).toContain("Authentication refresh failed."));
     // The saved API-key profile is a provider-wide sign-out; nothing goes through config.
     expect(request.mock.calls.filter(([method]) => method === "models.authLogout")).toEqual([
