@@ -329,9 +329,12 @@ describe("prompt cache history fingerprints", () => {
       return entry.message;
     });
     const tracker = history("cached-history", messages);
+    const layouts = new Set(messages.map((message) => fingerprintMessage(message).layout));
     const writes = vi.spyOn(messageFingerprints, "set");
+    const lookups = vi.spyOn(Map.prototype, "get");
     expect(tracker.read()).toMatchObject(unchangedPrefix);
     expect(writes).not.toHaveBeenCalled();
+    expect(lookups.mock.calls.filter(([key]) => layouts.has(key))).toHaveLength(0);
   });
 
   it("reuses owned content under mutable append envelopes across observers", async () => {
