@@ -14,6 +14,7 @@ import { TEST_TLS_CERT_PEM, TEST_TLS_KEY_PEM } from "../../test/helpers/tls-fixt
 import { isLiveTestEnabled } from "../agents/live-test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
+import { buildCatalogModel } from "../plugin-sdk/provider-catalog.test-support.js";
 import { listKnownProviderAuthEnvVarNamesCore } from "../secrets/provider-env-vars.js";
 import { extractFirstTextBlock } from "../shared/chat-message-content.js";
 import { acquireTestPortBlock } from "../test-utils/port-claims.js";
@@ -63,7 +64,9 @@ async function providerRelay(signal: AbortSignal) {
       const body = Buffer.concat(chunks);
       const parsed: Record<string, unknown> = JSON.parse(body.toString("utf8"));
       requests.push(parsed);
-      const hold = holds.shift();
+      // No-tool preparation completions can precede the receiving agent's request.
+      // Hold only its foreground tool-capable request, not the preparation phase.
+      const hold = Array.isArray(parsed.tools) ? holds.shift() : undefined;
       if (hold) {
         hold.entered.resolve(parsed);
         await withinTest(hold.release.promise, signal);
@@ -271,7 +274,15 @@ describeLive("quiet steering with real caller authority", () => {
             baseUrl: relay.url,
             apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
             request: { allowPrivateNetwork: true },
-            models: [],
+            // Loopback is classified as a compatible endpoint, but this unchanged-body
+            // relay reaches OpenAI. Declare its actual schema support so optional
+            // arguments stay optional through an explicit strict:false payload.
+            models: [
+              buildCatalogModel("gpt-5.4", {
+                reasoning: true,
+                compat: { supportsStrictMode: true },
+              }),
+            ],
           },
         },
       },
@@ -659,13 +670,17 @@ describeLive("quiet steering with real caller authority", () => {
           key,
           "First use read on report.txt. Then reply AUTHORITY_ROOT and follow any additional user instruction.",
         );
-        await withinTest(gate.entered.promise, signal);
+        const request = await withinTest(gate.entered.promise, signal);
+        expect(request.tools).toContainEqual(
+          expect.objectContaining({ name: "sessions_history", strict: false }),
+        );
         const admitted = await send(
           incoming,
           key,
-          "Use sessions_history exactly once with sessionKey=" +
-            restrictedKey +
-            " and limit=5. Report whether access succeeded; do not use read or any other tool.",
+          "Use sessions_history exactly once with these exact arguments: " +
+            JSON.stringify({ sessionKey: restrictedKey, limit: 5 }) +
+            ". Omit user to use the turn's original requester. Omit messageId, sessionId, offset, pendingBefore and all other optional arguments; do not invent IDs. " +
+            "Report whether access succeeded; do not use read or any other tool.",
         );
         if (!collaborative) {
           await waitQueued(admitted.runId);
@@ -688,6 +703,16 @@ describeLive("quiet steering with real caller authority", () => {
           (message) => message.role === "toolResult" && message.toolName === "sessions_history",
         );
         expect(results.length).toBeGreaterThan(0);
+        const calls = after.messages.flatMap((message) =>
+          Array.isArray(message.content)
+            ? message.content.filter(
+                (block) => block.type === "toolCall" && block.name === "sessions_history",
+              )
+            : [],
+        );
+        expect(calls.map((call) => call.arguments)).toEqual([
+          { sessionKey: restrictedKey, limit: 5 },
+        ]);
         const text = JSON.stringify(results);
         const allowed = collaborative ? highIncumbent : !highIncumbent;
         if (allowed) {
