@@ -502,7 +502,9 @@ export class AppSidebarOwner extends AppSidebarSessionNavigationElement implemen
       const toolbar = renderSessionListToolbar(this);
       const menus = this.sidebarMenus.render(this);
       // Connection state changes in a fixed slot; reconnects must not resize the session list.
-      const statusVisible = () => this.gatewayStatus?.kind;
+      const statusVisible = () =>
+        this.gatewayStatus?.kind &&
+        (this.gatewayStatus.kind !== "connected" || this.connectionRecovery);
       return (
         <aside
           class="sidebar sidebar--rail"

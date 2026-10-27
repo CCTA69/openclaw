@@ -91,7 +91,7 @@ suite.define(() => {
           elements: [sidebar],
         });
         const footer = sidebar.locator(".sidebar-shell__footer");
-        await footer.getByText("Connected", { exact: true }).waitFor();
+        await footer.locator(".gateway-status").waitFor({ state: "detached" });
         const chrome = await body.evaluate((element) => {
           const shell = element.closest(".sidebar-shell")!;
           const footerBounds = shell
