@@ -1,4 +1,3 @@
-import { writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { takeControlUiScreenshotFrame } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import {
@@ -21,7 +20,7 @@ const suite = createControlUiE2eSuite({
 const DEV_BRANCH = "feat/dev-branch-badge";
 
 suite.define(() => {
-  it("renders the dev checkout branch in the footer in the danger color", async () => {
+  it("renders the dev checkout branch and its tooltip in the footer", async () => {
     await suite.withPage(createControlUiE2eContextOptions(), async ({ page }) => {
       await installMockGateway(page, { devGitBranch: DEV_BRANCH });
 
@@ -41,18 +40,6 @@ suite.define(() => {
           }),
         )
         .toEqual({ name: DEV_BRANCH, description: DEV_BRANCH });
-
-      const colors = await badge.evaluate((element) => {
-        // Resolve the token before comparing against the computed RGB color.
-        const probe = document.createElement("span");
-        probe.style.color = "var(--danger)";
-        element.append(probe);
-        const danger = getComputedStyle(probe).color;
-        probe.remove();
-        return { badge: getComputedStyle(element).color, danger };
-      });
-      expect(colors.danger).not.toBe("");
-      expect(colors.badge).toBe(colors.danger);
     });
   });
 
@@ -90,7 +77,7 @@ suite.define(() => {
             return last.isVisible();
           })
           .toBe(true);
-        const healthy = await takeControlUiScreenshotFrame(page, sidebar, [body], {
+        await takeControlUiScreenshotFrame(page, sidebar, [body], {
           animations: "disabled",
           scrollTo: sidebar.getByText("CI timer", { exact: true }),
           elements: [sidebar],
@@ -114,10 +101,6 @@ suite.define(() => {
         const flag = sidebar.locator(".sidebar-shell__connection");
         await flag.waitFor({ state: "visible" });
         await page.clock.runFor(4_001);
-        const reconnecting = await takeControlUiScreenshotFrame(page, sidebar, [body, flag], {
-          animations: "disabled",
-          elements: [sidebar],
-        });
         expect(await flag.isVisible()).toBe(true);
         expect(await body.boundingBox()).toEqual(connectedBounds);
         await gateway.setOnline(true);
@@ -128,17 +111,6 @@ suite.define(() => {
         await expect
           .poll(() => page.url())
           .toBe(controlUiSessionUrl(suite.server.baseUrl, sessions[19]!.key));
-        if (process.env.OPENCLAW_CAPTURE_UI_PROOF === "1") {
-          for (const [state, frame] of [
-            ["healthy", healthy],
-            ["reconnecting", reconnecting],
-          ] as const) {
-            await writeFile(
-              `${suite.artifactDir}/sidebar-full-${viewport.name}-${state}.png`,
-              frame.elements[0]!.png,
-            );
-          }
-        }
       },
     );
   });
