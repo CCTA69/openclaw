@@ -140,8 +140,8 @@ Beta-publish uses
 `release_profile=beta`, `run_release_soak=false` (`npm-beta-v1` for a qualifying
 canonical beta target). Stable-publish requires `release_profile=stable` or
 `full`, soak, and blocking performance. Beta-profile evidence cannot qualify
-stable. FRV must conclude success under its pinned
-[release-tooling policy](../../../../docs/reference/full-release-validation/evidence.md#release-tooling-waivers).
+stable. FRV must conclude success with every selected lane passing under this
+branch's strict candidate-owned decision policy; changing P cannot waive failures.
 See [shared release boundaries](../SKILL.md#shared-release-boundaries),
 [validation](validation.md), and
 [publication recovery](publication-recovery.md). Diagnose
@@ -444,8 +444,8 @@ failure without republishing npm.
 Run [postpublish confidence](validation.md#postpublish-confidence) against the
 exact published package. For a beta-to-latest promotion, retain available
 deferred-lane results, including published-package Telegram, while enforcing
-the shared required publication proofs. The exact FRV must succeed, with any
-tooling-policy waivers already recorded there. Run safe
+the shared required publication proofs. The exact FRV and every selected lane
+must succeed; this branch does not support tooling-policy waivers. Run safe
 independent rosters concurrently while controlling local Docker/VM load.
 Classify failures before admitting a fix to the next beta; do not scan moving
 main or automatically rerun all groups. An operator's beta-attempt cap counts

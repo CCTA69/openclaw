@@ -51,18 +51,24 @@ later. This is recommended bookkeeping, not another release gate.
 
 ## Shared release boundaries
 
-FRV must conclude **success** under pinned P's
-[checked-in release-tooling policy](../../../docs/reference/full-release-validation/evidence.md#release-tooling-waivers).
-Only exact failed live-provider or Telegram leaves may be waived, without
-skipping tests or changing C/Q. All other required lanes must succeed: Windows
+This release branch predates trusted-P waiver evaluation: its Release Decision
+runs candidate-owned tooling. Changing P alone cannot retrofit waiver support
+into a frozen C/Q workflow. Follow the branch's strict
+[evidence policy](../../../docs/reference/full-release-validation/evidence.md#evidence-to-keep),
+not main's post-cutover waiver policy. A deliberate workflow cutover would need
+its own reviewed backport and newly qualified C/Q; this skill update does not
+provide one.
+
+FRV must conclude **success**, and every selected validation lane must pass,
+including live-provider and Telegram leaves. Required lanes include Windows
 and macOS Node and other normal CI jobs, install smoke, survivor
 lanes, `update-first-hop-compat*`, pack/npm qualification, package integrity,
 and Linux/Windows/macOS Gateway checks, including Windows packaged
 install/upgrade checks in Release Checks. A cancelled run still blocks. Preserve
 first failures and classify each one as below before recovery. Stable
 publication requires stable/full evidence, soak, and blocking performance.
-Beta-profile evidence cannot authorize stable publication. None of those hard
-gates, soak, or performance can be waived. All nine Gateway install/upgrade
+Beta-profile evidence cannot authorize stable publication. No selected lane,
+soak, or performance requirement can be waived on this branch. All nine Gateway install/upgrade
 combinations across Linux, Windows, and macOS are required for all-group
 qualification. Preserve identity, provenance, complete evidence, and existing
 publication approvals.
@@ -75,9 +81,9 @@ that is not a regression (for example the 2026.9.6 "Assign to…" bug). A real
 blocker is a regression in shipped bytes or behavior, or an update/install/
 publish defect; fix it on the release branch. Rerun a flake on
 the same Release SHA with at most two recorded reruns by default, and file a
-fix-in-parallel issue or PR on `main` with the evidence. Never re-cut for a flake.
-A deliberate tooling-code waiver requires FRV validation under the new pinned P,
-not a publisher override. An unwaived flake that remains red blocks publication.
+fix-in-parallel issue or PR on `main` with the evidence. Never re-cut, change
+P, or start a new FRV solely to waive a flake. A selected flake that remains red
+blocks publication.
 Main-only failures and infrastructure
 failures (runner outages, GitHub ghost jobs, hosted-runner offload) count as
 flakes for the release.
