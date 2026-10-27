@@ -323,7 +323,6 @@ function DashboardGrid(props: {
     {
       targets: () => [grid, ...(scroller ? [scroller] : []), ...content.values()],
       fonts: true,
-      changeTiming: "sync",
     },
   );
   const tracks = createMemo(() => new Map(view().tracks.map((track) => [track.index, track])));
