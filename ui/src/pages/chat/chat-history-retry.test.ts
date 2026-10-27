@@ -50,6 +50,15 @@ async function connectHistoryClient() {
   onTestFinished(() => client.stop());
   client.start();
   const socket = getLatestWebSocket();
+  const send = socket.send.bind(socket);
+  vi.spyOn(socket, "send").mockImplementation((data) => {
+    send(data);
+    const frame = JSON.parse(data);
+    // A held history read still has a live server; answer its real liveness probe.
+    if (frame.method === "health") {
+      socket.emitMessage({ type: "res", id: frame.id, ok: true, payload: {} });
+    }
+  });
   socket.emitOpen();
   socket.emitMessage({
     type: "event",
@@ -185,86 +194,96 @@ describe("shared chat history transient recovery", () => {
 
   it("retries a missing WebSocket response through the browser client's real request deadline", async () => {
     const { client, socket } = await connectHistoryClient();
-    const read = readHistory(client, "real-wire");
-    const outcome = read.catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(29_000);
-    socket.emitMessage({ type: "event", event: "tick", payload: {} });
-    await vi.advanceTimersByTimeAsync(1_499);
-    const methods = () => socket.sent.map((frame) => JSON.parse(frame).method);
-    expect(methods()).toEqual(["connect", "chat.history"]);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(methods()).toEqual(["connect", "chat.history", "chat.history"]);
-    const retry = JSON.parse(socket.sent[2]!);
-    socket.emitMessage({ type: "res", id: retry.id, ok: true, payload: { messages: [] } });
-    await expect(outcome).resolves.toEqual({ messages: [] });
-    expect(client.connected).toBe(true);
-    client.stop();
+    try {
+      const read = readHistory(client, "real-wire");
+      const outcome = read.catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(29_000);
+      socket.emitMessage({ type: "event", event: "tick", payload: {} });
+      await vi.advanceTimersByTimeAsync(1_499);
+      const reads = () =>
+        socket.sent
+          .map((frame) => JSON.parse(frame))
+          .filter((frame) => frame.method === "chat.history");
+      expect(reads()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(reads()).toHaveLength(2);
+      const retry = reads()[1]!;
+      socket.emitMessage({ type: "res", id: retry.id, ok: true, payload: { messages: [] } });
+      await expect(outcome).resolves.toEqual({ messages: [] });
+      expect(client.connected).toBe(true);
+    } finally {
+      client.stop();
+      await vi.advanceTimersByTimeAsync(0);
+    }
   });
 
   it("releases retired consumers without canceling a joined reader, then retires the last wire correlation", async () => {
     const { client, socket, timing } = await connectHistoryClient();
-    const retired = new AbortController();
-    const current = new AbortController();
-    let retiredSettled = false;
-    const first = readHistory(client, "joined-wire", () => true, retired.signal)
-      .catch((error: unknown) => error)
-      .finally(() => {
-        retiredSettled = true;
+    try {
+      const retired = new AbortController();
+      const current = new AbortController();
+      let retiredSettled = false;
+      const first = readHistory(client, "joined-wire", () => true, retired.signal)
+        .catch((error: unknown) => error)
+        .finally(() => {
+          retiredSettled = true;
+        });
+      const second = readHistory(client, "joined-wire", () => true, current.signal);
+      // Cleanup also rejects the joined read when the baseline stops at its red assertion.
+      void second.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      const joined = JSON.parse(socket.sent[1]!);
+      retired.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(retiredSettled).toBe(true);
+      await first;
+      expect(socket.sent).toHaveLength(2);
+      expect(timing.mock.calls.filter(([event]) => event.method === "chat.history")).toEqual([]);
+      socket.emitMessage({
+        type: "res",
+        id: joined.id,
+        ok: true,
+        payload: { messages: ["current"] },
       });
-    const second = readHistory(client, "joined-wire", () => true, current.signal);
-    // Cleanup also rejects the joined read when the baseline stops at its red assertion.
-    void second.catch(() => undefined);
-    await vi.advanceTimersByTimeAsync(0);
-    const joined = JSON.parse(socket.sent[1]!);
-    retired.abort();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(retiredSettled).toBe(true);
-    await first;
-    expect(socket.sent).toHaveLength(2);
-    expect(timing.mock.calls.filter(([event]) => event.method === "chat.history")).toEqual([]);
-    socket.emitMessage({
-      type: "res",
-      id: joined.id,
-      ok: true,
-      payload: { messages: ["current"] },
-    });
-    await expect(second).resolves.toEqual({ messages: ["current"] });
+      await expect(second).resolves.toEqual({ messages: ["current"] });
 
-    const last = new AbortController();
-    let lastSettled = false;
-    const abandoned = readHistory(client, "retired-wire", () => true, last.signal)
-      .catch((error: unknown) => error)
-      .finally(() => {
-        lastSettled = true;
-      });
-    await vi.advanceTimersByTimeAsync(0);
-    const obsolete = JSON.parse(socket.sent[2]!);
-    last.abort();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(lastSettled).toBe(true);
-    await abandoned;
-    expect(timing).toHaveBeenCalledWith(
-      expect.objectContaining({
+      const last = new AbortController();
+      let lastSettled = false;
+      const abandoned = readHistory(client, "retired-wire", () => true, last.signal)
+        .catch((error: unknown) => error)
+        .finally(() => {
+          lastSettled = true;
+        });
+      await vi.advanceTimersByTimeAsync(0);
+      const obsolete = JSON.parse(socket.sent[2]!);
+      last.abort();
+      const replacement = readHistory(client, "retired-wire");
+      void replacement.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(lastSettled).toBe(true);
+      await abandoned;
+      expect(timing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: obsolete.id,
+          method: "chat.history",
+          ok: false,
+          errorCode: "CLIENT_ABORTED",
+        }),
+      );
+      const fresh = JSON.parse(socket.sent[3]!);
+      expect(fresh.id).not.toBe(obsolete.id);
+      socket.emitMessage({
+        type: "res",
         id: obsolete.id,
-        method: "chat.history",
-        ok: false,
-        errorCode: "CLIENT_ABORTED",
-      }),
-    );
-    const replacement = readHistory(client, "retired-wire");
-    void replacement.catch(() => undefined);
-    await vi.advanceTimersByTimeAsync(0);
-    const fresh = JSON.parse(socket.sent[3]!);
-    expect(fresh.id).not.toBe(obsolete.id);
-    socket.emitMessage({
-      type: "res",
-      id: obsolete.id,
-      ok: true,
-      payload: { messages: ["obsolete"] },
-    });
-    socket.emitMessage({ type: "res", id: fresh.id, ok: true, payload: { messages: ["fresh"] } });
-    await expect(replacement).resolves.toEqual({ messages: ["fresh"] });
-    client.stop();
+        ok: true,
+        payload: { messages: ["obsolete"] },
+      });
+      socket.emitMessage({ type: "res", id: fresh.id, ok: true, payload: { messages: ["fresh"] } });
+      await expect(replacement).resolves.toEqual({ messages: ["fresh"] });
+    } finally {
+      client.stop();
+      await vi.advanceTimersByTimeAsync(0);
+    }
   });
 
   it("expires staggered readers before a long server hint", async () => {

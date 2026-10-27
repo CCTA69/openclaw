@@ -302,10 +302,13 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionObservation {
       this.presented && document.visibilityState !== "hidden";
     const refreshPresentedReads = () => {
       if (pageState.chatMetadataIsPresented?.()) {
+        this.resumeTranscriptReads();
         void refreshChatMetadata(pageState);
         this.resumeDeferredSessionHydration();
         this.markSessionRead(selectedChatSessionRow(pageState));
         void this.refreshTaskSuggestions({ automatic: true });
+      } else {
+        this.retireTranscriptReads(true);
       }
     };
     chatState.addCleanup(listen(document, "visibilitychange", refreshPresentedReads));
@@ -574,6 +577,15 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionObservation {
       const nextSessionKey = catalogKey
         ? this.sessionKey
         : resolveSessionKey(this.sessionKey, this.context.gateway.snapshot.hello);
+      // Route canonicalization keeps the same transcript owner and startup read.
+      // Only a different conversation retires that scope's resumable intent.
+      if (
+        nextSessionKey &&
+        resolveSessionKey(this.state.sessionKey, this.context.gateway.snapshot.hello) !==
+          nextSessionKey
+      ) {
+        this.retireTranscriptReads();
+      }
       if (nextSessionKey) {
         // Availability belongs to one activation. The replacement probe starts
         // after its transcript commit in deferSessionHydrationUntilTranscript.
@@ -675,6 +687,7 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionObservation {
   }
 
   override dispose() {
+    this.retireTranscriptReads();
     this.panelActions = undefined;
     this.activeSessionResources.sync(null);
     this.syncSessionCompanionPresentation(false);
