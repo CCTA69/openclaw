@@ -105,9 +105,7 @@ suite.define(() => {
           )
           .toBeNull();
         const working = page.locator(".chat-working-indicator");
-        await expect
-          .poll(() => working.textContent())
-          .toContain(firstMessage === "optimistic" ? "Waiting for turn to start" : "Working");
+        await expect.poll(() => working.textContent()).toContain("Working");
         await expect
           .poll(() =>
             evaluateControlUiContext(
