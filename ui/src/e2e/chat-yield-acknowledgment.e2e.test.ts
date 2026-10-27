@@ -234,7 +234,7 @@ suite.define(() => {
         .poll(async () => squash(await wait.textContent()))
         .toBe(`Waiting on ${FIRST} · 10m`);
       expect(await wait.locator("button[aria-expanded]").count()).toBe(0);
-      expect(await wait.locator("a.chat-subagent-wait__name").getAttribute("href")).toBe(
+      expect(await wait.locator("a").getAttribute("href")).toBe(
         "/chat/main/subagent/dependency-update-1",
       );
       expect(await thread.textContent()).not.toContain(PRIVATE);

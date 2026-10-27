@@ -10,7 +10,6 @@ import type {
   ChatSubagentWait,
   HandoffSessionLinks,
 } from "../chat-subagent-wait.ts";
-import "./chat-handoff-sessions.css";
 
 function needsInputLabel(count: number) {
   return count === 1
@@ -19,17 +18,12 @@ function needsInputLabel(count: number) {
 }
 
 /** A child's name: a link to its session when this viewer can open it, else text. */
-function HandoffSessionName(props: {
-  session: ChatHandoffSession;
-  links?: HandoffSessionLinks;
-  class: string;
-}) {
+function HandoffSessionName(props: { session: ChatHandoffSession; links?: HandoffSessionLinks }) {
   const link = createMemo(() => props.links?.(props.session.key));
   return (
-    <Show when={link()} fallback={<span class={props.class}>{props.session.label}</span>}>
+    <Show when={link()} fallback={<span>{props.session.label}</span>}>
       {(target) => (
         <a
-          class={[props.class, "chat-handoff-sessions__link"]}
           href={target().href}
           onClick={(event) => handleNavigationClick(event, () => target().open())}
         >
@@ -40,7 +34,7 @@ function HandoffSessionName(props: {
   );
 }
 
-/** Each child with a status in words; the dot only repeats it. */
+/** Each child with its status in words. */
 function HandoffSessionList(props: {
   id: string;
   sessions: readonly ChatHandoffSession[];
@@ -50,18 +44,8 @@ function HandoffSessionList(props: {
     <ul id={props.id} class="chat-handoff-sessions">
       <For each={props.sessions} keyed={(session) => session.key}>
         {(session) => (
-          <li
-            class="chat-handoff-sessions__row"
-            data-status={session().status}
-            data-session-key={session().key}
-            title={session().note}
-          >
-            <span class="chat-handoff-sessions__dot" aria-hidden="true" />
-            <HandoffSessionName
-              session={session()}
-              links={props.links}
-              class="chat-handoff-sessions__name"
-            />{" "}
+          <li data-status={session().status} title={session().note}>
+            <HandoffSessionName session={session()} links={props.links} />{" "}
             <span class="chat-handoff-sessions__status">
               {t(`chat.handoffSessionStatus.${session().status}`)}
             </span>
@@ -69,6 +53,14 @@ function HandoffSessionList(props: {
         )}
       </For>
     </ul>
+  );
+}
+
+function Chevron(props: { open: boolean }) {
+  return (
+    <span class="chat-tool-row__chevron">
+      <Icon name={props.open ? "chevronDown" : "chevronRight"} />
+    </span>
   );
 }
 
@@ -103,7 +95,7 @@ export function ChatSubagentWaitLine(props: {
           <>
             <button
               type="button"
-              class="chat-subagent-wait__toggle"
+              class="chat-subagent-wait__toggle chat-working-indicator__status"
               aria-expanded={open() ? "true" : "false"}
               aria-controls={id}
               onClick={() => setOpen(!open())}
@@ -118,7 +110,7 @@ export function ChatSubagentWaitLine(props: {
                 </span>{" "}
               </Show>
               {elapsed()}
-              <Icon name="chevronRight" class="chat-subagent-wait__chevron" />
+              <Chevron open={open()} />
             </button>
             <Show when={open()}>
               <HandoffSessionList id={id} sessions={props.wait.sessions} links={props.links} />
@@ -131,14 +123,10 @@ export function ChatSubagentWaitLine(props: {
             "\u0000",
           );
           return (
-            <span class="chat-subagent-wait__line">
+            <span class="chat-working-indicator__status">
               <span>
                 {before}
-                <HandoffSessionName
-                  session={session()}
-                  links={props.links}
-                  class="chat-subagent-wait__name"
-                />
+                <HandoffSessionName session={session()} links={props.links} />
                 {after}
               </span>{" "}
               <Show when={session().status === "attention"}>
@@ -192,7 +180,7 @@ export function ChatHandoffResume(props: {
           onClick={() => setOpen(!open())}
         >
           <span>{label()}</span> <span aria-hidden="true">·</span> <span>{count()}</span>
-          <Icon name="chevronRight" class="chat-subagent-wait__chevron" />
+          <Chevron open={open()} />
         </button>
         <Show when={open()}>
           <HandoffSessionList id={id} sessions={props.sessions} links={props.links} />

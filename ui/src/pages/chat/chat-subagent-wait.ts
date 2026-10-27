@@ -54,8 +54,10 @@ const HANDOFF_STATUS_ORDER: readonly ChatHandoffSession["status"][] = [
 ];
 
 /**
- * The direct children (subagents and sessions alike) whose work overlapped a
- * handoff from `from` until `to` (still open without one). Attention first.
+ * The direct children (subagents and sessions alike) whose current run overlapped
+ * a handoff from `from` until `to` (still open without one). Attention first.
+ * Rows carry only a child's latest run, so a child that started again after a
+ * resumed handoff is left out rather than credited with that later run.
  * "Needs your input" is the child's own declared attention; the Gateway row
  * does not distinguish a child paused for a continuation from a finished one.
  */
@@ -66,7 +68,7 @@ export function listHandoffSessions(
 ): ChatHandoffSession[] {
   return children
     .filter((row) => {
-      const started = row.createdAt ?? row.startedAt ?? 0;
+      const started = row.startedAt ?? row.createdAt ?? 0;
       return (
         (window.to === undefined || started <= window.to) &&
         (row.status === "queued" || isUnfinishedSubagent(row) || (row.endedAt ?? 0) >= window.from)
@@ -135,6 +137,21 @@ export function handoffSessionLinks(input: HandoffLinkInput): HandoffSessionLink
     });
     return { href: target.href, open: () => open({ namespace: face, ...target.options }) };
   };
+}
+
+// Resume rules also show each child's name and attention, which launch rows don't.
+function handoffFactsKey(rows: readonly GatewaySessionRow[] | undefined): string {
+  return (rows ?? [])
+    .map((row) => {
+      const attention = sessionRowAttention(row);
+      return JSON.stringify([
+        row.key,
+        resolveSessionDisplayName(row.key, row),
+        attention.kind === "agent" ? attention.note : null,
+      ]);
+    })
+    .toSorted()
+    .join("\n");
 }
 
 /** A resumed handoff's rule lists its children, so its row follows the roster. */
@@ -345,6 +362,6 @@ export function projectSubagentStatus(
         : [running, listed],
     ),
     // Seeded rows can already match; rows that list children wait for the pane's own query.
-    rowsKey: `${input.subagentSessionsHydrated && !input.subagentSessionsPending ? "complete" : "partial"}\n${spawnedSubagentsRenderKey(input.subagentSessions)}`,
+    rowsKey: `${input.subagentSessionsHydrated && !input.subagentSessionsPending ? "complete" : "partial"}\n${spawnedSubagentsRenderKey(input.subagentSessions)}\n${handoffFactsKey(input.subagentSessions)}`,
   };
 }

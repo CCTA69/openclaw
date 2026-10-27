@@ -478,7 +478,7 @@ suite.define(() => {
           }
         };
         // While it waits, the line names the session it waits on, linked to that session.
-        const waitingOn = indicator.locator("a.chat-subagent-wait__name");
+        const waitingOn = indicator.locator(".chat-subagent-wait a");
         await waitingOn.waitFor();
         expect(await waitingOn.getAttribute("href")).toMatch(
           /\/chat\/main\/implementation-child$/u,

@@ -459,7 +459,7 @@ describe("chat waiting on subagents", () => {
       );
       expect(container.querySelector(".chat-working-indicator__subagents")).toBeNull();
       expect(line?.querySelector("[aria-expanded]")).toBeNull();
-      const name = line?.querySelector<HTMLAnchorElement>("a.chat-subagent-wait__name");
+      const name = line?.querySelector<HTMLAnchorElement>("a");
       expect(name?.getAttribute("href")).toBe("/chat/main/subagent/child");
       name?.click();
       expect(onOpenSessionLink).toHaveBeenCalledOnce();
@@ -513,6 +513,43 @@ describe("chat waiting on subagents", () => {
     ).toEqual([child.key, sibling.key]);
   });
 
+  it("lists a resumed handoff's children from runs that overlapped it", () => {
+    const roster = (rows: GatewaySessionRow[]) => ({
+      subagentSessions: rows,
+      subagentSessionsHydrated: true,
+    });
+    const handoff = { yieldedAt: 2_000, resumedAt: 3_000 };
+    const finished = { hasActiveRun: false, status: "done" as const };
+    const during = { ...child, ...finished, createdAt: 1_000, startedAt: 1_000, endedAt: 2_500 };
+    // Created before the handoff and finished before it: not waited on.
+    const before = { ...during, key: "agent:main:subagent:before", endedAt: 1_500 };
+    // The same kind of child, started again after the resume: its current run
+    // is later work, and the row keeps no record of the earlier one.
+    const restarted = {
+      ...child,
+      key: "agent:main:subagent:restarted",
+      createdAt: 1_000,
+      startedAt: 4_000,
+      hasActiveRun: true,
+    };
+    expect(
+      listResumedHandoffSessions(parent.key, roster([during, before, restarted]), handoff).map(
+        (session) => session.key,
+      ),
+    ).toEqual([during.key]);
+  });
+
+  it("re-renders resumed lists when a listed child's name or attention changes", () => {
+    const key = (row: GatewaySessionRow) => status({ subagentSessions: [row] }).rowsKey;
+    const attention = {
+      ...child,
+      agentStatus: { note: "Pick a merge method", attention: "hand" as const, expiresAt: 9e15 },
+    };
+    expect(key(attention)).not.toBe(key(child));
+    expect(key({ ...child, label: "Renamed" })).not.toBe(key(child));
+    expect(key({ ...child })).toBe(key(child));
+  });
+
   it("links child names only to sessions this pane loaded and can open", () => {
     const onOpenSessionLink = vi.fn();
     const dashboard = {
@@ -554,10 +591,10 @@ describe("chat waiting on subagents", () => {
       { waitingSubagents: wait, sessionLinks: links },
     );
     const [linked, plain] = container.querySelectorAll("li");
-    const anchor = linked?.querySelector<HTMLAnchorElement>("a.chat-handoff-sessions__name");
+    const anchor = linked?.querySelector<HTMLAnchorElement>("a");
     expect(anchor?.getAttribute("href")).toBe("/ui/chat/main/subagent/child");
     expect(plain?.querySelector("a")).toBeNull();
-    expect(plain?.querySelector(".chat-handoff-sessions__name")?.textContent).toBe("Unloaded");
+    expect(plain?.querySelector("span")?.textContent).toBe("Unloaded");
     onOpenSessionLink.mockClear();
     // Modified and middle clicks keep native link behavior for a new tab.
     for (const init of [{ metaKey: true }, { ctrlKey: true }, { button: 1 }]) {
