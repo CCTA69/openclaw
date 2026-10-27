@@ -1,10 +1,11 @@
+import { channel } from "node:diagnostics_channel";
 import { performance } from "node:perf_hooks";
+import { WorkerTaskPoolCore } from "@openclaw/worker-runtime";
 import { afterEach, expect, it, vi } from "vitest";
 import { drainGlobalSingletonLifecycleState } from "../shared/global-singleton.js";
 import * as diagnostics from "./diagnostic-events.js";
 import { runGitWorkerOperation } from "./git-worker.js";
 import { getTrackedWorkerLifecycleSnapshot } from "./worker-cpu.js";
-import { WorkerTaskPool } from "./worker-task-pool.js";
 
 vi.mock("node:os", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:os")>()),
@@ -30,7 +31,7 @@ afterEach(async () => {
   logs.info.mockClear();
 });
 
-it("reuses concurrent Git readers across polling intervals and releases them when idle", async () => {
+it("keeps one Git reader warm after polling and evicts it on memory pressure", async () => {
   const lifecycle = () =>
     getTrackedWorkerLifecycleSnapshot().workerLifecycle.find(
       (worker) => worker.script === "git-operation.worker.js",
@@ -55,9 +56,24 @@ it("reuses concurrent Git readers across polling intervals and releases them whe
     expect(starts() - before).toBe(2);
   }
   await vi.advanceTimersByTimeAsync(120_000);
-  await vi.waitFor(() => expect(idleExits() - exitsBefore).toBe(2));
+  await vi.waitFor(() => expect(idleExits() - exitsBefore).toBe(1));
+  await vi.advanceTimersByTimeAsync(10 * 60_000);
+  await expect(
+    runGitWorkerOperation({ type: "repository.identities", input: { roots: [] } }),
+  ).resolves.toEqual([]);
+  expect(starts() - before).toBe(2);
+  const pressureExits = () =>
+    lifecycle()?.retired.find((entry) => entry.reason === "memory_pressure")?.count ?? 0;
+  const pressureBefore = pressureExits();
+  channel("openclaw.memory.critical").publish({});
+  await vi.waitFor(() => expect(pressureExits() - pressureBefore).toBe(1));
+  expect(starts() - before).toBe(2);
   await expect(poll()).resolves.toEqual([[], []]);
   expect(starts() - before).toBe(4);
+  await drainGlobalSingletonLifecycleState();
+  expect(
+    lifecycle()!.started - lifecycle()!.retired.reduce((sum, entry) => sum + entry.count, 0),
+  ).toBe(0);
 });
 
 const cwd = "/private/checkouts/diagnostic-fixture";
@@ -110,7 +126,7 @@ it.each([
       };
     });
     // Exercise the real broker and logger without a worker boot or wall-clock timeout.
-    vi.spyOn(WorkerTaskPool.prototype, "run").mockImplementation(async (input, options) => {
+    vi.spyOn(WorkerTaskPoolCore.prototype, "run").mockImplementation(async (input, options) => {
       clock += 400;
       if (typeof input === "function") {
         await input();

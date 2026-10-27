@@ -309,7 +309,7 @@ it.each(["host", "idle"] as const)(
   },
 );
 
-it("reuses idle workers and expires them without retaining completed caller context", async () => {
+it("keeps the newest idle worker warm without retaining completed caller context", async () => {
   const caller = new AsyncLocalStorage<string>();
   const retiredContexts: Array<string | undefined> = [];
   vi.useFakeTimers();
@@ -329,9 +329,11 @@ it("reuses idle workers and expires them without retaining completed caller cont
     await vi.advanceTimersByTimeAsync(40_000);
     expect(await caller.run("reused-turn", run)).toMatchObject({ status: "completed" });
     expect(fixture.pools).toHaveLength(count);
-    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect([previous.isClosed, reused.isClosed]).toEqual([true, false]);
-    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await run()).toMatchObject({ status: "completed" });
+    expect(fixture.pools).toHaveLength(count);
+    channel("openclaw.memory.critical").publish({});
     expect(reused.isClosed).toBe(true);
     expect(retiredContexts).toEqual([undefined, undefined]);
   } finally {
@@ -353,26 +355,72 @@ it("lets a completed burst retire while serial work keeps one worker warm", asyn
   expect(burst.filter((pool) => !pool.isClosed)).toHaveLength(1);
 });
 
-it.each([
-  ["90s delayed wake", 0, 60_000, 30_000, 210_000],
-  ["360s delayed wake", 0, 330_000, 30_000, 0],
-  ["immediate backward clock", 0, -3_600_000, 300_000, 0],
-  ["backward clock after 60s", 60_000, -3_600_000, 240_000, 0],
-] as const)(
-  "keeps idle expiry through %s",
-  async (_label, beforeMs, clockShift, afterMs, remainingMs) => {
-    vi.useFakeTimers();
-    const pool = await warmPool();
-    await vi.advanceTimersByTimeAsync(beforeMs);
-    vi.setSystemTime(Date.now() + clockShift);
-    await vi.advanceTimersByTimeAsync(afterMs);
-    if (remainingMs) {
-      expect(pool.isClosed).toBe(false);
-      await vi.advanceTimersByTimeAsync(remainingMs);
-    }
-    expect(pool.isClosed).toBe(true);
-  },
-);
+it("keeps a compatible warm worker for each host and heap limit", async () => {
+  vi.useFakeTimers();
+  const sibling = new LegacyPluginSdkResourceHost();
+  const siblingScheduler = createTestGatewayScheduler("fake-timers");
+  sibling.bindScheduler(siblingScheduler);
+  const largerInput = {
+    ...input,
+    config: { ...input.config, memoryLimitBytes: 128 * 1024 * 1024 },
+  };
+  const runLarger = () =>
+    host.run(() => nodeCodeModeExecutor.execute(largerInput, { timeoutMs: 1000 }));
+  const runSibling = () =>
+    sibling.run(() => nodeCodeModeExecutor.execute(input, { timeoutMs: 1000 }));
+  const start = fixture.pools.length;
+  try {
+    const owned = await warmPool();
+    await runLarger();
+    const larger = fixture.pools.at(-1)!;
+    await runSibling();
+    const siblingPool = fixture.pools.at(-1)!;
+    expect(fixture.pools).toHaveLength(start + 3);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect([owned.isClosed, larger.isClosed, siblingPool.isClosed]).toEqual([false, false, false]);
+    await run();
+    expect(owned.run).toHaveBeenCalledTimes(2);
+    await runLarger();
+    expect(larger.run).toHaveBeenCalledTimes(2);
+    await runSibling();
+    expect(siblingPool.run).toHaveBeenCalledTimes(2);
+    expect(fixture.pools).toHaveLength(start + 3);
+  } finally {
+    await sibling.close();
+    await siblingScheduler.stop();
+  }
+});
+
+it("retires an expired former warm worker when a newer worker finishes", async () => {
+  vi.useFakeTimers();
+  const activePool = await warmPool();
+  const held = holdRun(activePool);
+  const active = host.run(() =>
+    nodeCodeModeExecutor.execute(
+      { ...input, config: { ...input.config, timeoutMs: 120_000 } },
+      { timeoutMs: 120_000 },
+    ),
+  );
+  await held.started;
+  try {
+    await run();
+    const formerWarm = fixture.pools.at(-1)!;
+    const count = fixture.pools.length;
+    expect(formerWarm).not.toBe(activePool);
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(formerWarm.isClosed).toBe(false);
+    held.complete(fixture.completed);
+    expect(await active).toMatchObject({ status: "completed" });
+    expect(formerWarm.isClosed).toBe(true);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(activePool.isClosed).toBe(false);
+    expect(await run()).toMatchObject({ status: "completed" });
+    expect(fixture.pools).toHaveLength(count);
+  } finally {
+    held.complete(fixture.completed);
+    await active;
+  }
+});
 
 it("bounds the warm set and retires every idle pool on memory pressure", async () => {
   const start = fixture.pools.length;
