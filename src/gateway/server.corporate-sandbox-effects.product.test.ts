@@ -42,6 +42,7 @@ it.skipIf(!enabled)(
     docker("info", "--format", "{{.ID}}");
     console.info("[corporate-effect-proof] phase=docker-info-complete");
     docker("image", "inspect", DEFAULT_SANDBOX_IMAGE);
+    console.info("[corporate-effect-proof] phase=image-inspect-complete");
 
     await using cleanup = new AsyncDisposableStack();
     // The supervised built Gateway owns its runtime outside the Vitest module graph.
@@ -62,6 +63,7 @@ it.skipIf(!enabled)(
       },
     });
     cleanup.defer(() => instance.cleanup());
+    console.info("[corporate-effect-proof] phase=instance-prepared");
     const state = instance.state;
     const sessionKey = `agent:main:corporate-effects-${randomUUID()}`;
     const sandboxPrefix = `oc-corp-${randomUUID().slice(0, 12)}-`;
@@ -89,6 +91,7 @@ it.skipIf(!enabled)(
       }
     });
     expect((await withinTest(once(hostProcess, "message"), signal))[0]).toBe("ready");
+    console.info("[corporate-effect-proof] phase=host-sentinel-ready");
     expect(hostProcess.pid).toBeTypeOf("number");
     // Positive control: this exact process can receive a harmless host signal.
     const hostSignal = once(hostProcess, "message");

@@ -11,6 +11,8 @@ export const gatewayPluginTestFiles = [
 
 // Native database consumers retain lifecycle cleanup within each forked process.
 export const gatewayDatabaseWorkerTestFiles = [
+  // The supervised Gateway fixture also owns native state/port-claim lifecycle.
+  "src/gateway/server.corporate-sandbox-effects.product.test.ts",
   "src/gateway/agent-runtime-identity-token.test.ts",
   "src/gateway/agent-turn/agent-run-execution-phase.owner.test.ts",
   "src/gateway/agent-turn/agent-run-media.test.ts",
@@ -629,8 +631,6 @@ export const gatewayServerIsolatedTestFiles = [
   "src/gateway/server.chat.canonical-publication.test.ts",
   "src/gateway/server.chat-membership-authority.product.test.ts",
   "src/gateway/server.chat-queued-followup-operator-authority.product.test.ts",
-  // Opt-in real Docker effects run without neighboring tool/backend mocks.
-  "src/gateway/server.corporate-sandbox-effects.product.test.ts",
   "src/gateway/chat-input-recovery.authority.test.ts",
   "src/gateway/server-chat.retired-projection.test.ts",
   "src/gateway/server-plugin-subagent-runtime.overrides.test.ts",
