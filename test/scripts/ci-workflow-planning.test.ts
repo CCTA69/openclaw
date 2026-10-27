@@ -13276,6 +13276,53 @@ describe("ci workflow guards", () => {
     expect(compatibilityJob.steps.at(-1)?.run).toContain("src/config/sessions/sessions.test.ts");
   });
 
+  it.skipIf(process.platform === "win32").each(["false", "true", "", "unexpected"])(
+    "runs the minimum-Node compatibility commands once with frozen target %j",
+    (frozenTarget) => {
+      const job = readCiWorkflow().jobs["checks-node-compat"];
+      const setup = job.steps.find((step: WorkflowStep) => step.name === "Setup Node environment");
+      expect(setup.with["node-version"]).toBe("24.22.1");
+      const step = job.steps.at(-1);
+      expect(step.env.CI_COMPAT_FROZEN_TARGET).toBe("${{ needs.preflight.outputs.frozen_target }}");
+      const root = tempDirs.make("openclaw-node-compat-commands-");
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      mkdirSync(bin);
+      for (const command of ["pnpm", "node"]) {
+        writeExecutable(path.join(bin, command), [
+          "#!/bin/sh",
+          `printf '%s:%s\\n' '${command}' "$*" >> "$COMMAND_LOG"`,
+          'if [ "$1" = build ] && [ "${FAIL_BUILD:-}" = 1 ]; then exit 42; fi',
+        ]);
+      }
+      const run = (failBuild = false) =>
+        spawnSync("/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
+          cwd: root,
+          encoding: "utf8",
+          env: {
+            PATH: `${bin}:/usr/bin:/bin`,
+            COMMAND_LOG: calls,
+            CI_COMPAT_FROZEN_TARGET: frozenTarget,
+            FAIL_BUILD: failBuild ? "1" : "0",
+          },
+        });
+      const result = run();
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([
+        "pnpm:build",
+        ...(frozenTarget === "false" ? [] : ["pnpm:ui:build"]),
+        "node:openclaw.mjs --help",
+        "node:openclaw.mjs status --json --timeout 1",
+        "pnpm:test:build:singleton",
+        "pnpm:test src/config/sessions/session-accessor.test.ts src/config/sessions/store-writer.test.ts src/config/sessions/sessions.test.ts",
+      ]);
+      rmSync(calls);
+      const failed = run(true);
+      expect(failed.status, failed.stderr).toBe(42);
+      expect(readFileSync(calls, "utf8")).toBe("pnpm:build\n");
+    },
+  );
+
   it.skipIf(process.platform === "win32").each([
     ["schedule", "ios-build", "cancelled", "true", 0],
     ["schedule", "ios-build", "failure", "true", 1],
