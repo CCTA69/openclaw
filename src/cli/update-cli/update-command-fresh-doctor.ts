@@ -479,6 +479,12 @@ export async function runUpdateFinalizationDoctorInFreshProcess(params: {
           : refusal,
       };
     }
+    // Install the child's postimage before completion callbacks persist parent ledger writes.
+    const databaseReceipt = params.databaseBackup
+      ? recordUpdateDatabaseWrites(params.databaseBackup, doctorResult?.databaseWrites, {
+          name: `${params.phase} doctor`,
+        })
+      : undefined;
     if (processSettlement) {
       params.onDoctorStep?.(processSettlement);
     }
@@ -488,13 +494,8 @@ export async function runUpdateFinalizationDoctorInFreshProcess(params: {
       doctorStep.deferredInspectionCheckIds = doctorResult?.deferredInspectionCheckIds ?? null;
       params.onDoctorStep?.(doctorStep);
     }
-    if (params.databaseBackup) {
-      const receipt = recordUpdateDatabaseWrites(
-        params.databaseBackup,
-        doctorResult?.databaseWrites,
-        { name: `${params.phase} doctor` },
-      );
-      params.onDoctorStep?.(receipt);
+    if (databaseReceipt) {
+      params.onDoctorStep?.(databaseReceipt);
     }
     if (doctorResult?.warnings?.length) {
       params.onWarnings?.(doctorResult.warnings);

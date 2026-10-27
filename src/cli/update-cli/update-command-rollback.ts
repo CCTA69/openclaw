@@ -101,6 +101,9 @@ export async function rollbackFailedUpdate(params: {
 }> {
   const { preManagedServiceStop: before, packageTransaction, opts } = params;
   const run = opts.run;
+  if (run) {
+    run.writeCapture = undefined;
+  }
   const executor = run?.executorFence;
   const assertCurrent = () => {
     if (opts.run !== run || run?.executorFence !== executor) {

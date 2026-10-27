@@ -248,7 +248,9 @@ export async function runPackageUpdateDoctor(params: PackageDoctorOptions) {
                 configInputHash: context.inputHash,
                 repair: doctorPolicy.fix,
                 fullIntegrityCheck: params.fullIntegrityCheck,
-                databaseGenerations: context.databaseBackup?.sourceGenerations,
+                databaseGenerations:
+                  context.databaseBackup?.migration?.to ??
+                  context.databaseBackup?.sourceGenerations,
                 databasePluginOwners: context.databaseBackup?.pluginOwners,
                 originalRecoveryCapture: context.originalRecoveryCapture,
                 get serviceInspectionDeadlineAtMs() {

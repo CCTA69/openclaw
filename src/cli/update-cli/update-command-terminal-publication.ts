@@ -27,7 +27,11 @@ import {
   resolveSettledUpdateCommandResult,
 } from "./update-command-terminal.js";
 
-export function captureUpdateFinalization(params: FinishUpdateParams) {
+export function captureUpdateFinalization(
+  params: FinishUpdateParams,
+  observeGatewayStartAttempted?: () => void,
+) {
+  const originalRun = params.opts.run;
   const fence = createUpdateCommandFinalizationFence(params);
   const assertCurrent = params.opts.run?.requesterAuthority
     ? createUpdateCommandAuthority({ opts: params.opts, assertCurrent: fence }).assertCurrent
@@ -40,7 +44,13 @@ export function captureUpdateFinalization(params: FinishUpdateParams) {
     fence,
     assertCurrent,
     recordPhase,
-    originalRun: params.opts.run,
+    originalRun,
+    onGatewayStartAttempted: () => {
+      if (originalRun) {
+        originalRun.writeCapture = undefined;
+      }
+      observeGatewayStartAttempted?.();
+    },
     compensate: captureMutableUpdateCompensation(params.opts),
     forward: <T>(work: () => Promise<T>) =>
       withMutableUpdateForwardScope(params.opts, () =>

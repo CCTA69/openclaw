@@ -3,14 +3,17 @@ import {
   openExistingOpenClawStateWriter,
   type ExistingOpenClawStateWriter,
 } from "../state/openclaw-state-db-existing-write.js";
+import { assertStateDatabaseAccessAllowed } from "./gateway-state-owner.js";
 import { isPostgresSqlConnection } from "./sql-connection.js";
 import { setSqliteBusyTimeout } from "./sqlite-busy-timeout.js";
 import { isSqliteLockError } from "./sqlite-error-diagnostics.js";
+import { runWithSqliteCleanup } from "./sqlite-lifecycle-errors.js";
 import {
   retrySqliteWorkerAdmission,
   SQLITE_WORKER_ADMISSION_DEADLINE_MS,
 } from "./sqlite-worker-admission-retry.js";
 import { requestSqliteWorkerOperationAdmission } from "./sqlite-worker-operation-admission.js";
+import type { UpdateDoctorMigrationCapture } from "./update-doctor-migration-attribution.js";
 import { claimUpdateResultInTransaction } from "./update-result-claim.js";
 import { resolveUpdateRunCodecEnv, type UpdateRunLedgerOptions } from "./update-run-codec.js";
 import { createUpdateRun } from "./update-run-ledger.js";
@@ -29,6 +32,7 @@ import {
   UPDATE_RUN_BOOKKEEPING_TIMEOUT_MS,
   mutateRunInTransaction,
   updateRunLedgerSchema,
+  updateRunWriteOptions,
 } from "./update-run-write.js";
 
 export function openUpdateRunWriter(options: UpdateRunLedgerOptions): ExistingOpenClawStateWriter {
@@ -84,10 +88,35 @@ export function recordUpdateRunMutationInWorker(
       record: createUpdateRun(command.input.run, codecOptions, assertCurrent),
     };
   }
+  const generation = input.writeGeneration;
+  let after: string | null | undefined = generation?.before;
+  let observed = false;
+  let refusal: string | undefined;
+  const writeCapture: UpdateDoctorMigrationCapture | undefined = generation && {
+    expected(path) {
+      if (path !== generation.path) {
+        throw new Error("Update ledger attribution changed its database path.");
+      }
+      return after;
+    },
+    assertCurrent: () => assertStateDatabaseAccessAllowed(generation.path),
+    accept(path, before, value) {
+      if (path !== generation.path || before !== after) {
+        throw new Error("Update ledger attribution is out of order.");
+      }
+      observed = true;
+      after = value;
+    },
+    refuse(message) {
+      refusal = message;
+    },
+  };
   let entered = false;
-  try {
-    assertCurrent("transaction");
-    return writer().run(({ db }) => {
+  let ownedWriter: ExistingOpenClawStateWriter | undefined;
+  function mutate(): UpdateRunWriteOperations["updateRuns.recordStep"]["output"] {
+    const stateWriter = ownedWriter ?? writer();
+    const writeOptions = updateRunWriteOptions({ ...options, writeCapture });
+    return stateWriter.run(({ db }) => {
       entered = true;
       // The longer wait is for BEGIN only; mutation and commit keep the normal lock budget.
       if (!isPostgresSqlConnection(db) && busyTimeoutMs > OPENCLAW_SQLITE_BUSY_TIMEOUT_MS) {
@@ -136,7 +165,24 @@ export function recordUpdateRunMutationInWorker(
           : undefined;
       assertCurrent("commit");
       return { kind: "recorded", record, ...(updateResult ? { updateResult } : {}) };
-    }, options);
+    }, writeOptions);
+  }
+  try {
+    assertCurrent("transaction");
+    // Captured updates settle native close on this reply, not a later worker retirement.
+    ownedWriter = generation ? openUpdateRunWriter(options) : undefined;
+    const result = runWithSqliteCleanup(
+      { release: () => ownedWriter?.close() },
+      "Update ledger write",
+      mutate,
+    );
+    if (!generation) {
+      return result;
+    }
+    if (refusal || !observed || after === undefined) {
+      throw new Error(refusal ?? "Update ledger write did not publish its generation.");
+    }
+    return { ...result, writeGeneration: { ...generation, after } };
   } catch (cause) {
     if (entered || !isSqliteLockError(cause)) {
       throw cause;

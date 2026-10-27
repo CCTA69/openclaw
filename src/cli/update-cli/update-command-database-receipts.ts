@@ -1,6 +1,7 @@
 import { sha256Hex } from "../../infra/crypto-digest.js";
 import type { UpdateDatabaseBackup } from "../../infra/update-database-backup.js";
 import type { UpdateDatabaseWriteReceipt } from "../../infra/update-database-generations.js";
+import type { UpdateDoctorMigrationCapture } from "../../infra/update-doctor-migration-attribution.js";
 import {
   UPDATE_DOCTOR_HISTORICAL_SCANS_ENV,
   type UpdateDoctorHistoricalScans,
@@ -10,6 +11,35 @@ import type { UpdateStepResult } from "../../infra/update-step-result.js";
 // The installed driver records the first Doctor receipt here. Its existing backup
 // object is the operation identity shared with post-plugin convergence. No durable cache.
 const historicalScans = new WeakMap<UpdateDatabaseBackup, UpdateDoctorHistoricalScans>();
+
+export function createUpdateDatabaseWriteCapture(
+  backup: UpdateDatabaseBackup,
+  assertCurrent: () => void,
+): UpdateDoctorMigrationCapture {
+  const expected = () => backup.migration?.to ?? backup.sourceGenerations;
+  return {
+    expected: (pathname) => expected()[pathname],
+    assertCurrent,
+    refuse: (message) => {
+      backup.restoreRefusal ??= message;
+    },
+    accept: (pathname, before, after) => {
+      assertCurrent();
+      const generations = expected();
+      if (generations[pathname] === undefined || generations[pathname] !== before) {
+        backup.restoreRefusal ??= "databases changed after snapshot capture; the writer is unknown";
+      }
+      if (!backup.restoreRefusal) {
+        backup.migration = {
+          name: backup.migration?.name ?? "update ledger writes",
+          backup: backup.directory,
+          from: backup.migration?.from ?? backup.sourceGenerations,
+          to: { ...generations, [pathname]: after },
+        };
+      }
+    },
+  };
+}
 
 export function consumeUpdateDoctorHistoricalScans(
   backup: UpdateDatabaseBackup,

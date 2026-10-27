@@ -7,6 +7,7 @@ import { escapeRegExp } from "../shared/regexp.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db-contract.js";
 import type { UpdateRuns } from "../state/openclaw-state-db.generated.js";
 import { resolveRequiredHomeDir } from "./home-dir.js";
+import type { UpdateDoctorMigrationCapture } from "./update-doctor-migration-attribution.js";
 import { normalizeUpdateFailureFacts } from "./update-failure-facts.js";
 import { UPDATE_RUN_TEXT_LIMIT } from "./update-run-limits.js";
 import type { UpdateRunRedactionFacts } from "./update-run-mutation.types.js";
@@ -70,6 +71,7 @@ const RETAINED_STEP_NAMES = [
 ];
 export type UpdateRunLedgerOptions = OpenClawStateDatabaseOptions & {
   busyTimeoutMs?: number;
+  writeCapture?: UpdateDoctorMigrationCapture;
   redactPaths?: readonly string[];
 };
 

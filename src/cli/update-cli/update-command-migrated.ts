@@ -296,11 +296,14 @@ export async function continueMigratedUpdateInFreshProcess(
     const handoff = createUpdateTimeoutHandoff(params.opts.timeout, params.updateStepTimeoutMs);
     assertCurrent();
     const resultPath = path.join(scratchDir, "result.json");
+    // This handoff also relinquishes the parent's database rollback ownership.
+    run.writeCapture = undefined;
     const {
       requesterAuthority,
       executorFence,
       sourceArtifactLock: _sourceArtifactLock,
       deadline: _deadline,
+      writeCapture: _writeCapture,
       ...runIdentity
     } = run;
     const { onResult: _onResult, ...serializableOptions } = params.opts;

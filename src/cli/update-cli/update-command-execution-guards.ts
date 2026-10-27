@@ -125,6 +125,7 @@ export function createUpdateCommandExecutionGuards(
     return {
       env: capturedEnv,
       context,
+      writeCapture: run?.writeCapture,
       // Driver-only wait; these writes run in the worker, never on the Gateway event loop.
       busyTimeoutMs: run?.busyTimeoutMs ?? 120_000,
       assertAccepting,

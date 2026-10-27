@@ -21,6 +21,7 @@ import {
   prepareOpenClawStateDatabaseRemoval,
 } from "../../state/openclaw-state-db-cache.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
+import { createUpdateDatabaseWriteCapture } from "./update-command-database-receipts.js";
 import type { MutableUpdateExecutionParams } from "./update-command-execution.types.js";
 import {
   readUpdateCandidateSource,
@@ -159,6 +160,16 @@ export async function captureUpdateDatabases(params: {
     backup.warnings.push(
       `Automatic database restoration is disabled because ${unavailable ? `the Gateway could not be confirmed stopped during capture: ${unavailable}` : "a source database changed or its write generation could not be captured"}. Snapshots remain available at ${backup.directory} even after successful activation; later writes must be preserved.`,
     );
+  }
+  const run = execution.opts.run;
+  if (restorable && run) {
+    const capture = createUpdateDatabaseWriteCapture(backup, () => {
+      // The admitted writer owns authority; receipt settlement must not reopen policy state.
+      if (execution.opts.run !== run || run.writeCapture !== capture || run.interrupted) {
+        throw new Error("Update database capture no longer owns this invocation.");
+      }
+    });
+    run.writeCapture = capture;
   }
   const step: UpdateStepResult = {
     name: "database snapshot",

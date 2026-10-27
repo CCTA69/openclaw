@@ -5,7 +5,10 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { recordUpdateDatabaseWrites } from "../cli/update-cli/update-command-database-receipts.js";
+import {
+  createUpdateDatabaseWriteCapture,
+  recordUpdateDatabaseWrites,
+} from "../cli/update-cli/update-command-database-receipts.js";
 import { withAgentDatabaseMaintenanceLease } from "../state/openclaw-agent-db-maintenance-lease.js";
 import { createOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-db-async-lifecycle.js";
 import {
@@ -294,9 +297,14 @@ async function withCapture(
   }
 }
 
-it.each(["native", "worker"] as const)(
-  "completes deferred retirement after the %s parent records Doctor completion",
-  async (parent) => {
+it.each([
+  ["native", false],
+  ["worker", false],
+  ["native", true],
+  ["worker", true],
+] as const)(
+  "attributes the %s parent's retirement sequence (outside write: %s)",
+  async (parent, outsideWrite) => {
     const { root, pathname, env } = fixture(path.join("state", "openclaw.sqlite"));
     const { runId } = createUpdateRun({ trigger: "cli" }, { env });
     Object.assign(env, { [UPDATE_RUN_ID_ENV]: runId });
@@ -316,32 +324,56 @@ it.each(["native", "worker"] as const)(
     expect(first.warnings).toEqual([]);
     expect(first.receipt).toMatchObject({ unchanged: true, fromGenerations: sourceGenerations });
     recordUpdateDatabaseWrites(backup, first.receipt, { name: "pre-plugin doctor" });
+    const writeCapture = createUpdateDatabaseWriteCapture(backup, () => {});
 
-    const completion = {
-      step: "pre-plugin doctor",
-      status: "completed" as const,
-      endedAtMs: Date.now(),
-    };
-    if (parent === "native") {
-      recordUpdateRunStep(runId, completion, { env });
-    } else {
-      await recordUpdateRunStepAsync(runId, completion, { env });
-    }
-    await closeOpenClawStateDatabaseAsync();
-    const second = await withCapture(env, backup.migration!.to, async () => {
-      expect((await prepareOpenClawStateDatabaseSchema({ env }, "doctor")).warnings).toEqual([]);
-      recordUpdateModelRetirement("completed", env);
-    });
-    expect(second.warnings).toEqual([]);
-    expect(second.receipt).toMatchObject({ unchanged: true });
-    recordUpdateDatabaseWrites(backup, second.receipt, { name: "post-plugin doctor" });
-    expect(backup.restoreRefusal).toBeUndefined();
-    expect(backup.sourceGenerations).toEqual(sourceGenerations);
     try {
+      if (outsideWrite) {
+        using writer = new DatabaseSync(pathname);
+        writer.exec("INSERT INTO config_machine_state VALUES ('test.outside-write', '99', 1);");
+      }
+      const recordCompletion = async () => {
+        const completion = {
+          step: "pre-plugin doctor",
+          status: "completed" as const,
+          endedAtMs: Date.now(),
+        };
+        if (parent === "native") {
+          recordUpdateRunStep(runId, completion, { env, writeCapture });
+        } else {
+          await recordUpdateRunStepAsync(runId, completion, { env, writeCapture });
+        }
+      };
+      if (outsideWrite) {
+        await expect(recordCompletion()).rejects.toThrow();
+        expect(backup.restoreRefusal).toBeDefined();
+      } else {
+        await recordCompletion();
+      }
+      await closeOpenClawStateDatabaseAsync();
+      const second = await withCapture(env, backup.migration!.to, async () => {
+        const admission = prepareOpenClawStateDatabaseSchema({ env }, "doctor");
+        if (outsideWrite) {
+          await expect(admission).rejects.toThrow(
+            "SQLite migration source changed after update capture:",
+          );
+        } else {
+          expect((await admission).warnings).toEqual([]);
+          recordUpdateModelRetirement("completed", env);
+        }
+      });
+      expect(second.receipt).toMatchObject({ unchanged: !outsideWrite });
+      recordUpdateDatabaseWrites(backup, second.receipt, { name: "post-plugin doctor" });
+      expect(backup.sourceGenerations).toEqual(sourceGenerations);
+      if (outsideWrite) {
+        expect(backup.restoreRefusal).toBeDefined();
+      } else {
+        expect(second.warnings).toEqual([]);
+        expect(backup.restoreRefusal).toBeUndefined();
+      }
       expect(getUpdateRun(runId, { env })?.steps).toContainEqual(
         expect.objectContaining({
           step: "finalize:doctor:model-retirement",
-          status: "completed",
+          status: outsideWrite ? "skipped" : "completed",
         }),
       );
     } finally {

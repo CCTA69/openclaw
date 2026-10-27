@@ -5,6 +5,10 @@ import type { DB } from "../state/openclaw-state-db.generated.js";
 import { getOpenClawStateFeatureSchemaSql } from "../state/openclaw-state-feature-schema.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "./kysely-sync.js";
 import type { EngineConnection } from "./sql-connection.js";
+import {
+  getUpdateDoctorMigrationCapture,
+  runUpdateSqliteLedgerWrite,
+} from "./update-doctor-migration-attribution.js";
 import { createUpdateErrorFact } from "./update-failure-facts.js";
 import { completeUpdateFailureSummary } from "./update-failure-result.js";
 import { claimUpdateResultInTransaction } from "./update-result-claim.js";
@@ -164,6 +168,21 @@ export function mutateRunInTransaction(
   return before === JSON.stringify(record) ? record : persistRun(db, record, options);
 }
 
+export function updateRunWriteOptions(options: UpdateRunLedgerOptions) {
+  const capture = options.writeCapture ?? getUpdateDoctorMigrationCapture();
+  return capture
+    ? {
+        ...options,
+        sqliteWrite: <T>(
+          db: import("node:sqlite").DatabaseSync,
+          path: string,
+          assertCurrent: () => void,
+          operation: () => T,
+        ) => runUpdateSqliteLedgerWrite(db, path, operation, assertCurrent, capture),
+      }
+    : options;
+}
+
 export function mutateRun(
   runId: string,
   update: (record: UpdateRunRecord) => void,
@@ -174,7 +193,7 @@ export function mutateRun(
   // must never reopen through bootstrap/migration merely to report its outcome.
   return runExistingOpenClawStateWriteTransaction(
     ({ db }) => mutateRunInTransaction(db, runId, update, options, captureBefore),
-    options,
+    updateRunWriteOptions(options),
     {
       schemaSql: updateRunLedgerSchema,
       operationLabel: "update.run",
@@ -328,7 +347,7 @@ export function finishUpdateRun(
       }
       return record;
     },
-    options,
+    updateRunWriteOptions(options),
     {
       schemaSql: updateRunLedgerSchema,
       operationLabel: "update.run",
