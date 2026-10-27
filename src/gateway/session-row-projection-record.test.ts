@@ -4,6 +4,7 @@ import { projectGatewaySessionEntry } from "../config/sessions/combined-store-ga
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { filterSessionEntries } from "./session-list-filters.js";
+import { indexSessionRow } from "./session-row-projection-identities.js";
 import { createSessionRowLookup } from "./session-row-projection-materialize.js";
 import * as records from "./session-row-projection-record.js";
 import { createSessionRowProjectionRevisions } from "./session-row-projection-revisions.js";
@@ -26,6 +27,41 @@ const target = {
   agentId: "main",
   storeTarget: { agentId: "main", storePath: "/synthetic/sessions.sqlite" },
 };
+
+it("shares singleton index buckets without coupling alias collisions or removals", () => {
+  const indexes = {
+    byStore: new Map<string, Set<string>>(),
+    byAgent: new Map<string, Set<string>>(),
+    byKey: new Map<string, Set<string>>(),
+    byParent: new Map<string, Set<string>>(),
+  };
+  const first = { ...records.create(target, original), entry: original };
+  first.parents.add("logical:main\0agent:main:parent");
+  indexSessionRow(first, indexes);
+  const buckets = Object.values(indexes).flatMap((index) => Array.from(index.values()));
+  // One retained bucket per row, not one copy per lookup alias.
+  expect(new Set(buckets).size).toBe(1);
+  const singleton = buckets[0]!;
+  const second = { ...first, key: "agent:main:other" };
+  const firstId = records.identity(first);
+  const secondId = records.identity(second);
+  indexSessionRow(second, indexes);
+  indexSessionRow(second, indexes);
+  expect([...indexes.byKey.get("id:session")!]).toEqual([firstId, secondId]);
+  expect([...indexes.byKey.get(`key:${first.key}`)!]).toEqual([firstId]);
+  expect([...singleton]).toEqual([firstId]);
+  indexSessionRow(first, indexes, true);
+  expect(indexes.byKey.has(`key:${first.key}`)).toBe(false);
+  expect([...indexes.byKey.get("id:session")!]).toEqual([secondId]);
+  expect([...singleton]).toEqual([firstId]);
+  indexSessionRow(first, indexes);
+  expect([...indexes.byKey.get("id:session")!]).toEqual([secondId, firstId]);
+  expect([...indexes.byKey.get(`key:${second.key}`)!]).toEqual([secondId]);
+  for (const row of [second, first]) {
+    indexSessionRow(row, indexes, true);
+  }
+  expect(Object.values(indexes).map((index) => index.size)).toEqual([0, 0, 0, 0]);
+});
 
 it("captures current published entries without preparing acquisition state", () => {
   let current: records.Row | undefined = { ...records.create(target, original), entry: original };
